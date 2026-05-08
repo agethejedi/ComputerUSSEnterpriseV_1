@@ -381,9 +381,9 @@ function LocalWeather({ highlighted, weather, loading, error }) {
       </div>
 
       <RadarMap
-        center={[33.8907, -96.8903]}
+        center={[33.0807, -96.8867]}
         zoom={7}
-        markers={[{ lat: 33.8907, lon: -96.8903, label: "YOU", isYou: true }]}
+        markers={[{ lat: 33.0807, lon: -96.8867, label: "YOU", isYou: true }]}
         className="h-32"
         showLabels={true}
         accent={accent}
