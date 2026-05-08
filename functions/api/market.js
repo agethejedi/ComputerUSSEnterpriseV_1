@@ -1,25 +1,15 @@
 // Cloudflare Pages Function: /api/market
-// Fetches live market data from Twelve Data and returns it shaped
-// to match the JarvisBriefing component's existing expectations
-// (id, name, val, chg, pct, unit, futuresLabel, fetchedAt, session).
 //
-// Caches at the edge for 60 seconds, so even if the page is open
-// in many tabs / refreshed, we only hit Twelve Data ~once a minute.
+// Returns live data for a hardcoded watchlist of stocks plus commodity ETFs.
+// Stocks come back clean from Twelve Data's free tier (no proxy nonsense),
+// so the values displayed are real share prices for the actual companies.
 //
-// Sessions:
-//   "futures" → Mon-Fri 12:00 AM CT to 8:29 AM CT (overnight)
-//   "regular" → Mon-Fri 8:30 AM CT to 11:59 PM CT (cash + after-hours)
-//   "closed"  → Sat all day, Sun all day
-//
-// During "regular" we query the actual cash indices (DJI, IXIC, SPX).
-// During "futures" or "closed" we query the ETF proxies (DIA, QQQ, SPY)
-// because cash indices don't update outside trading hours and ETFs do
-// have extended-hours quotes that loosely reflect futures direction.
+// Edge-cached at Cloudflare for 60 seconds.
 
-const INDICES = [
-  { id: "DJI", name: "DOW",     futuresLabel: "DOW FUT",    cashSym: ".DJI",  proxySym: "DIA" },
-  { id: "NDX",  name: "NASDAQ",  futuresLabel: "NASDAQ FUT", cashSym: ".IXIC", proxySym: "QQQ" },
-  { id: "SPX",  name: "S&P 500", futuresLabel: "S&P FUT",    cashSym: ".SPX",  proxySym: "SPY" },
+const WATCHLIST = [
+  { id: "AAPL", name: "APPLE",    sym: "AAPL" },
+  { id: "NVDA", name: "NVIDIA",   sym: "NVDA" },
+  { id: "MSFT", name: "MICROSOFT", sym: "MSFT" },
 ];
 
 const COMMODITIES = [
@@ -31,21 +21,26 @@ const COMMODITIES = [
   { id: "SI", name: "SILVER",    sym: "SLV",  unit: "USD/SHARE (SLV)" },
 ];
 
-// Returns "futures" | "regular" | "closed" using America/Chicago time.
+// Returns "open" | "afterhours" | "closed" based on Central Time.
+// "open"       → Mon-Fri 8:30 AM CT to 3:00 PM CT (regular US equity hours)
+// "afterhours" → Mon-Fri before 8:30 AM or after 3:00 PM (free tier doesn't
+//                actually carry extended-hours quotes, so values shown will
+//                be the most recent regular-session close)
+// "closed"     → Sat all day, Sun all day
 function getMarketSession(now = new Date()) {
   const ctString = now.toLocaleString("en-US", { timeZone: "America/Chicago", hour12: false });
-  // ctString is like "5/8/2026, 14:23:45"
   const [datePart, timePart] = ctString.split(", ");
   const [month, day, year] = datePart.split("/").map(Number);
   const [hour, minute] = timePart.split(":").map(Number);
   const ctDate = new Date(Date.UTC(year, month - 1, day));
-  const dow = ctDate.getUTCDay(); // 0=Sun ... 6=Sat
+  const dow = ctDate.getUTCDay();
 
   if (dow === 0 || dow === 6) return "closed";
   const minutesOfDay = hour * 60 + minute;
-  const REGULAR_OPEN = 8 * 60 + 30; // 8:30 AM CT
-  if (minutesOfDay < REGULAR_OPEN) return "futures";
-  return "regular";
+  const REGULAR_OPEN = 8 * 60 + 30;  // 8:30 AM CT
+  const REGULAR_CLOSE = 15 * 60;     // 3:00 PM CT
+  if (minutesOfDay >= REGULAR_OPEN && minutesOfDay < REGULAR_CLOSE) return "open";
+  return "afterhours";
 }
 
 async function fetchQuotes(symbols, apiKey) {
@@ -55,7 +50,6 @@ async function fetchQuotes(symbols, apiKey) {
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Twelve Data HTTP ${resp.status}`);
   const data = await resp.json();
-  // Single-symbol responses come back flat; multi-symbol come back keyed.
   if (symbols.length === 1) return { [symbols[0]]: data };
   return data;
 }
@@ -92,7 +86,6 @@ export async function onRequestGet(context) {
     );
   }
 
-  // Edge cache check
   const cacheKey = new Request(new URL(request.url).toString(), request);
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
@@ -103,10 +96,9 @@ export async function onRequestGet(context) {
   }
 
   const session = getMarketSession();
-  const useCash = session === "regular";
-  const indexSymbols = INDICES.map((i) => (useCash ? i.cashSym : i.proxySym));
+  const watchlistSymbols = WATCHLIST.map((s) => s.sym);
   const commoditySymbols = COMMODITIES.map((c) => c.sym);
-  const allSymbols = [...indexSymbols, ...commoditySymbols];
+  const allSymbols = [...watchlistSymbols, ...commoditySymbols];
 
   let quotes;
   try {
@@ -118,14 +110,12 @@ export async function onRequestGet(context) {
     );
   }
 
-  const indices = INDICES.map((meta, i) => {
-    const sym = indexSymbols[i];
-    const parsed = parseQuote(quotes[sym]);
+  const watchlist = WATCHLIST.map((meta) => {
+    const parsed = parseQuote(quotes[meta.sym]);
     return {
       id: meta.id,
       name: meta.name,
-      futuresLabel: meta.futuresLabel,
-      sourceSymbol: sym, // e.g. "DJI" or "DIA" — useful for debugging
+      sourceSymbol: meta.sym,
       ...parsed,
     };
   });
@@ -144,7 +134,7 @@ export async function onRequestGet(context) {
   const payload = {
     session,
     fetchedAt: Date.now(),
-    indices,
+    watchlist,
     commodities,
   };
 
