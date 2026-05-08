@@ -193,28 +193,30 @@ function Panel({ title, code, children, accent = "#7DD3FC", highlighted = false,
 // MOCK DATA
 // ============================================================
 
-const WEATHER_DATA = {
+// Live weather is fetched from /api/weather (NOAA). This fallback is
+// used briefly on first load before the fetch completes and during
+// error states so the UI never goes blank.
+const FALLBACK_WEATHER = {
+  fetchedAt: null,
   local: {
-    temp: 47,
-    feels: 43,
-    humidity: 68,
-    wind: "NW 12",
-    baro: 30.12,
-    conditions: "partly cloudy",
-    high: 52,
-    low: 38,
-    forecast: "Light rain possible around 2 PM, otherwise dry through evening.",
     location: "The Colony, TX",
+    current: null,
+    forecastTiles: [
+      { label: "6AM", tempF: null },
+      { label: "12PM", tempF: null },
+      { label: "6PM", tempF: null },
+      { label: "12AM", tempF: null },
+    ],
+    alerts: [],
   },
   national: {
-    summary: "Strong storm system tracking across upper Midwest with severe thunderstorm risk for Chicago and Detroit. Pacific Northwest under continued atmospheric river conditions through Thursday. Northeast cold and clear. Gulf coast mild.",
     cities: [
-      { name: "San Francisco", temp: 58 },
-      { name: "Los Angeles", temp: 71 },
-      { name: "Chicago", temp: 39 },
-      { name: "New York", temp: 44 },
-      { name: "Miami", temp: 78 },
-      { name: "Dallas", temp: 62 },
+      { code: "SFO", name: "San Francisco", tempF: null, lat: 37.7749, lon: -122.4194 },
+      { code: "LAX", name: "Los Angeles",  tempF: null, lat: 34.0522, lon: -118.2437 },
+      { code: "CHI", name: "Chicago",      tempF: null, lat: 41.8781, lon: -87.6298 },
+      { code: "NYC", name: "New York",     tempF: null, lat: 40.7128, lon: -74.0060 },
+      { code: "MIA", name: "Miami",        tempF: null, lat: 25.7617, lon: -80.1918 },
+      { code: "DFW", name: "Dallas",       tempF: null, lat: 32.7767, lon: -96.7970 },
     ],
   },
 };
@@ -275,8 +277,36 @@ function executeToolCall(name, input, ctx) {
   switch (name) {
     case "get_weather": {
       const scope = input.scope || "local";
-      if (scope === "national") return JSON.stringify(WEATHER_DATA.national);
-      return JSON.stringify(WEATHER_DATA.local);
+      const wx = ctx.weatherData || FALLBACK_WEATHER;
+      if (scope === "national") {
+        return JSON.stringify({
+          fetchedAt: wx.fetchedAt,
+          cities: wx.national.cities,
+          note: "Temperatures are current-period forecast values from NOAA for each city.",
+        });
+      }
+      // local
+      const c = wx.local.current;
+      return JSON.stringify({
+        fetchedAt: wx.fetchedAt,
+        location: wx.local.location,
+        current: c
+          ? {
+              tempF: c.tempF,
+              feelsF: c.feelsF,
+              humidity: c.humidity,
+              windDir: c.windDir,
+              windSpeedMph: c.windSpeed,
+              barometricInHg: c.baroIn,
+              conditions: c.conditions,
+              station: c.stationName,
+              observedAt: c.observedAt,
+            }
+          : null,
+        forecastTiles: wx.local.forecastTiles,
+        alerts: wx.local.alerts,
+        note: "Live data from NOAA / National Weather Service.",
+      });
     }
     case "get_market_data": {
       const symbols = (input.symbols || []).map((s) => s.toLowerCase());
@@ -326,20 +356,27 @@ function executeToolCall(name, input, ctx) {
 // PANELS
 // ============================================================
 
-function LocalWeather({ highlighted }) {
+function LocalWeather({ highlighted, weather, loading, error }) {
   const accent = "#7DD3FC";
+  const c = weather?.current;
+  const tiles = weather?.forecastTiles || [];
+  const alerts = weather?.alerts || [];
   return (
-    <Panel title="LOCAL // KGRR" code="WX.01" accent={accent} highlighted={highlighted} panelKey="local_weather">
+    <Panel title={`LOCAL // ${weather?.location || "—"}`} code="WX.01" accent={accent} highlighted={highlighted} panelKey="local_weather">
       <div className="flex items-start justify-between mb-3">
         <div>
-          <div className="text-4xl font-light tracking-tight" style={{ color: accent }}>{WEATHER_DATA.local.temp}°</div>
-          <div className="text-[10px] tracking-[0.2em] opacity-60 mt-1 uppercase">{WEATHER_DATA.local.conditions}</div>
+          <div className="text-4xl font-light tracking-tight" style={{ color: accent }}>
+            {c?.tempF != null ? `${c.tempF}°` : (loading ? "…" : "—")}
+          </div>
+          <div className="text-[10px] tracking-[0.2em] opacity-60 mt-1 uppercase truncate max-w-[160px]">
+            {c?.conditions || (loading ? "loading" : error ? "no data" : "—")}
+          </div>
         </div>
         <div className="text-right text-[10px] tracking-[0.15em] opacity-70 space-y-0.5">
-          <div>FEELS · {WEATHER_DATA.local.feels}°</div>
-          <div>HUMID · {WEATHER_DATA.local.humidity}%</div>
-          <div>WIND · {WEATHER_DATA.local.wind}</div>
-          <div>BARO · {WEATHER_DATA.local.baro}</div>
+          <div>FEELS · {c?.feelsF != null ? `${c.feelsF}°` : "—"}</div>
+          <div>HUMID · {c?.humidity != null ? `${c.humidity}%` : "—"}</div>
+          <div>WIND · {c?.windDir && c?.windSpeed != null ? `${c.windDir} ${c.windSpeed}` : "—"}</div>
+          <div>BARO · {c?.baroIn != null ? c.baroIn.toFixed(2) : "—"}</div>
         </div>
       </div>
 
@@ -359,57 +396,257 @@ function LocalWeather({ highlighted }) {
           <text x="103" y="75" fill={accent} fontSize="5" opacity="0.7" fontFamily="monospace">YOU</text>
         </svg>
         <div className="absolute top-1 left-2 text-[8px] tracking-[0.2em]" style={{ color: accent, opacity: 0.7 }}>RADAR · 1KM</div>
-        <div className="absolute bottom-1 right-2 text-[8px] tracking-[0.2em]" style={{ color: accent, opacity: 0.5 }}>LIVE</div>
+        <div className="absolute bottom-1 right-2 text-[8px] tracking-[0.2em]" style={{ color: accent, opacity: 0.5 }}>{c ? "LIVE" : "—"}</div>
       </div>
 
       <div className="mt-2 grid grid-cols-4 gap-2">
-        {["6AM", "12PM", "6PM", "12AM"].map((t, i) => (
-          <div key={t} className="text-center">
-            <div className="text-[9px] tracking-[0.15em] opacity-50">{t}</div>
-            <div className="text-sm font-light" style={{ color: accent }}>{[42, 51, 49, 38][i]}°</div>
+        {tiles.map((t) => (
+          <div key={t.label} className="text-center">
+            <div className="text-[9px] tracking-[0.15em] opacity-50">{t.label}</div>
+            <div className="text-sm font-light" style={{ color: accent }}>
+              {t.tempF != null ? `${t.tempF}°` : "—"}
+            </div>
           </div>
         ))}
       </div>
+
+      {alerts.length > 0 && (
+        <div className="mt-2 px-2 py-1 text-[9px] tracking-[0.15em]" style={{ background: "#FB718515", border: "1px solid #FB718566", color: "#FB7185" }}>
+          ⚠ {alerts[0].event}: {alerts[0].areaDesc?.split(";")[0]}
+        </div>
+      )}
     </Panel>
   );
 }
 
-function NationalWeather({ highlighted }) {
+// Lazy-loads Leaflet from CDN once and caches the promise.
+let leafletLoadPromise = null;
+function loadLeaflet() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletLoadPromise) return leafletLoadPromise;
+
+  leafletLoadPromise = new Promise((resolve, reject) => {
+    // CSS
+    if (!document.querySelector('link[data-leaflet]')) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      link.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+      link.crossOrigin = "";
+      link.setAttribute("data-leaflet", "");
+      document.head.appendChild(link);
+    }
+    // JS
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    script.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
+    script.crossOrigin = "";
+    script.onload = () => resolve(window.L);
+    script.onerror = (e) => reject(e);
+    document.head.appendChild(script);
+  });
+  return leafletLoadPromise;
+}
+
+function NationalWeather({ highlighted, weather }) {
   const accent = "#7DD3FC";
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const radarLayersRef = useRef([]);
+  const animTimerRef = useRef(null);
+  const animPosRef = useRef(0);
+  const framesRef = useRef([]);
+  const apiHostRef = useRef(null);
+  const [timestamp, setTimestamp] = useState("");
+  const [mapReady, setMapReady] = useState(false);
+  const cities = weather?.national?.cities || [];
+
+  // Initialize map once
+  useEffect(() => {
+    let cancelled = false;
+    let observer = null;
+
+    (async () => {
+      const L = await loadLeaflet();
+      if (cancelled || !L || !mapRef.current) return;
+
+      // Center on continental US
+      const map = L.map(mapRef.current, {
+        zoomControl: false,
+        attributionControl: false,
+        dragging: true,
+        scrollWheelZoom: false,
+        doubleClickZoom: false,
+        keyboard: false,
+        touchZoom: false,
+      }).setView([39.5, -98.35], 3);
+
+      // Dark base layer that matches the HUD theme
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", {
+        maxZoom: 10,
+        subdomains: "abcd",
+      }).addTo(map);
+
+      // Subtle country/state labels overlay
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", {
+        maxZoom: 10,
+        subdomains: "abcd",
+        opacity: 0.5,
+      }).addTo(map);
+
+      mapInstanceRef.current = map;
+      setMapReady(true);
+
+      // Watch for container resize so the map redraws correctly when panels reflow
+      if (typeof ResizeObserver !== "undefined") {
+        observer = new ResizeObserver(() => map.invalidateSize());
+        observer.observe(mapRef.current);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (observer) observer.disconnect();
+      if (animTimerRef.current) clearTimeout(animTimerRef.current);
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
+
+  // Add city markers + temperatures on top
+  useEffect(() => {
+    const L = window.L;
+    const map = mapInstanceRef.current;
+    if (!L || !map || !mapReady) return;
+
+    // Clear any existing markers
+    map.eachLayer((layer) => {
+      if (layer.options?.isCityLabel) map.removeLayer(layer);
+    });
+
+    cities.forEach((city) => {
+      if (city.lat == null || city.lon == null) return;
+      const html = `
+        <div style="
+          font-family: ui-monospace, 'SF Mono', monospace;
+          color: ${accent};
+          font-size: 10px;
+          letter-spacing: 0.05em;
+          text-shadow: 0 0 4px ${accent}, 0 0 2px #000, 0 0 2px #000;
+          white-space: nowrap;
+          transform: translate(8px, -50%);
+        ">${city.code} ${city.tempF != null ? city.tempF + "°" : "—"}</div>
+        <div style="
+          width: 4px; height: 4px;
+          background: ${accent};
+          box-shadow: 0 0 4px ${accent};
+          border-radius: 50%;
+        "></div>
+      `;
+      const icon = L.divIcon({ html, className: "", iconSize: [4, 4], iconAnchor: [2, 2] });
+      L.marker([city.lat, city.lon], { icon, isCityLabel: true, interactive: false }).addTo(map);
+    });
+  }, [cities, mapReady]);
+
+  // Fetch RainViewer frames + animate
+  useEffect(() => {
+    if (!mapReady) return;
+    let cancelled = false;
+
+    const start = async () => {
+      try {
+        const resp = await fetch("https://api.rainviewer.com/public/weather-maps.json");
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (cancelled) return;
+
+        apiHostRef.current = data.host;
+        // past + nowcast frames combined; fall back to past only
+        const past = data.radar?.past || [];
+        const nowcast = data.radar?.nowcast || [];
+        framesRef.current = [...past, ...nowcast];
+        if (!framesRef.current.length) return;
+
+        animPosRef.current = past.length - 1; // start at "now"
+        playAnimation();
+      } catch {}
+    };
+
+    const playAnimation = () => {
+      const L = window.L;
+      const map = mapInstanceRef.current;
+      const frames = framesRef.current;
+      if (!L || !map || !frames.length || cancelled) return;
+
+      const tick = () => {
+        if (cancelled) return;
+        const frame = frames[animPosRef.current];
+        const tileUrl = `${apiHostRef.current}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+
+        const layer = L.tileLayer(tileUrl, {
+          tileSize: 256,
+          opacity: 0.0,
+          zIndex: 100,
+        }).addTo(map);
+
+        // Crossfade in
+        let opacity = 0;
+        const fadeIn = setInterval(() => {
+          opacity += 0.15;
+          if (opacity >= 0.7) {
+            opacity = 0.7;
+            clearInterval(fadeIn);
+            // Remove old layers (keep only newest 2 to avoid blank flashes)
+            while (radarLayersRef.current.length > 1) {
+              const old = radarLayersRef.current.shift();
+              if (old) map.removeLayer(old);
+            }
+          }
+          layer.setOpacity(opacity);
+        }, 30);
+
+        radarLayersRef.current.push(layer);
+
+        // Update timestamp display
+        const date = new Date(frame.time * 1000);
+        const ctTime = date.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
+        setTimestamp(`${ctTime} CT`);
+
+        animPosRef.current = (animPosRef.current + 1) % frames.length;
+        animTimerRef.current = setTimeout(tick, 800);
+      };
+
+      tick();
+    };
+
+    start();
+
+    return () => {
+      cancelled = true;
+      if (animTimerRef.current) clearTimeout(animTimerRef.current);
+      if (mapInstanceRef.current) {
+        radarLayersRef.current.forEach((layer) => mapInstanceRef.current.removeLayer(layer));
+        radarLayersRef.current = [];
+      }
+    };
+  }, [mapReady]);
+
   return (
     <Panel title="NATIONAL // CONUS" code="WX.02" accent={accent} highlighted={highlighted} panelKey="national_weather">
-      <div className="relative h-44" style={{ background: "#020617", border: `1px solid ${accent}22` }}>
-        <svg viewBox="0 0 300 180" className="w-full h-full">
-          {[30, 60, 90, 120, 150].map((y) => <line key={`h${y}`} x1="0" y1={y} x2="300" y2={y} stroke={accent} strokeWidth="0.3" opacity="0.12" />)}
-          {[40, 80, 120, 160, 200, 240, 280].map((x) => <line key={`v${x}`} x1={x} y1="0" x2={x} y2="180" stroke={accent} strokeWidth="0.3" opacity="0.12" />)}
-          <path d="M 30 60 L 80 50 L 130 45 L 180 48 L 230 55 L 270 70 L 275 100 L 250 130 L 200 145 L 150 150 L 100 145 L 60 130 L 35 110 Z" fill={accent} opacity="0.04" stroke={accent} strokeWidth="0.5" strokeOpacity="0.3" />
-          <ellipse cx="55" cy="90" rx="20" ry="35" fill="#22D3EE" opacity="0.35" />
-          <ellipse cx="55" cy="90" rx="12" ry="22" fill="#A78BFA" opacity="0.4" />
-          <ellipse cx="160" cy="85" rx="35" ry="22" fill="#F472B6" opacity="0.3" />
-          <ellipse cx="160" cy="85" rx="20" ry="12" fill="#FB7185" opacity="0.5" />
-          <ellipse cx="240" cy="70" rx="22" ry="14" fill="#E0E7FF" opacity="0.4" />
-          <ellipse cx="180" cy="135" rx="28" ry="10" fill="#34D399" opacity="0.3" />
-          <path d="M 80 60 Q 130 80 200 75" fill="none" stroke="#FB7185" strokeWidth="1" strokeDasharray="4 2" opacity="0.6" />
-          <path d="M 100 120 Q 160 110 220 125" fill="none" stroke="#22D3EE" strokeWidth="1" strokeDasharray="4 2" opacity="0.6" />
-          {[
-            { x: 50, y: 95, label: "SFO 58°" },
-            { x: 100, y: 130, label: "LAX 71°" },
-            { x: 165, y: 90, label: "CHI 39°" },
-            { x: 245, y: 75, label: "NYC 44°" },
-            { x: 195, y: 140, label: "MIA 78°" },
-            { x: 130, y: 135, label: "DFW 62°" },
-          ].map((c, i) => (
-            <g key={i}>
-              <circle cx={c.x} cy={c.y} r="1.5" fill={accent} />
-              <text x={c.x + 4} y={c.y + 3} fill={accent} fontSize="6" fontFamily="monospace" opacity="0.85">{c.label}</text>
-            </g>
-          ))}
-        </svg>
-        <div className="absolute top-1 left-2 text-[8px] tracking-[0.2em]" style={{ color: accent, opacity: 0.7 }}>NEXRAD COMPOSITE</div>
-        <div className="absolute bottom-1 right-2 text-[8px] tracking-[0.2em] flex gap-3" style={{ color: accent, opacity: 0.6 }}>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: "#22D3EE" }} />RAIN</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: "#E0E7FF" }} />SNOW</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 inline-block" style={{ background: "#F472B6" }} />STORM</span>
+      <div className="relative h-44 overflow-hidden" style={{ background: "#020617", border: `1px solid ${accent}22` }}>
+        <div ref={mapRef} className="absolute inset-0" style={{ background: "#020617" }} />
+        {!mapReady && (
+          <div className="absolute inset-0 flex items-center justify-center text-[10px] tracking-[0.2em] opacity-60" style={{ color: accent }}>
+            LOADING RADAR…
+          </div>
+        )}
+        <div className="absolute top-1 left-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>RAINVIEWER · LIVE</div>
+        <div className="absolute top-1 right-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none tabular-nums" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>{timestamp}</div>
+        <div className="absolute bottom-1 right-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none flex gap-3" style={{ color: accent, opacity: 0.7, textShadow: "0 0 4px #000" }}>
+          <span>NOAA TEMPS</span>
         </div>
       </div>
     </Panel>
@@ -614,11 +851,18 @@ export default function JarvisBriefing() {
   const [marketError, setMarketError] = useState(null);
   const marketSession = getMarketSession(now);
 
+  // Live weather data
+  const [weatherData, setWeatherData] = useState(FALLBACK_WEATHER);
+  const [weatherLoading, setWeatherLoading] = useState(true);
+  const [weatherError, setWeatherError] = useState(null);
+
   // Keep refs in sync so the tool executor (which is created once) can read latest values
   const marketDataRef = useRef(marketData);
   const marketSessionRef = useRef(marketSession);
+  const weatherDataRef = useRef(weatherData);
   useEffect(() => { marketDataRef.current = marketData; }, [marketData]);
   useEffect(() => { marketSessionRef.current = marketSession; }, [marketSession]);
+  useEffect(() => { weatherDataRef.current = weatherData; }, [weatherData]);
 
   const apiMessagesRef = useRef([]);
   const recognitionRef = useRef(null);
@@ -660,6 +904,54 @@ export default function JarvisBriefing() {
     };
     load();
     const interval = setInterval(load, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Fetch weather data on mount + every 10 minutes.
+  // Cloudflare Function caches at the edge for 10 minutes too, so this
+  // only actually hits NOAA roughly every 10 minutes across all users.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/weather");
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setWeatherError(data.error || "Failed to load weather data");
+          setWeatherLoading(false);
+          return;
+        }
+        // Preserve lat/lon from FALLBACK_WEATHER for the map markers
+        // (NOAA payload doesn't echo them back, only city codes and temps).
+        const fallbackByCode = Object.fromEntries(
+          FALLBACK_WEATHER.national.cities.map((c) => [c.code, c])
+        );
+        const merged = {
+          ...data,
+          national: {
+            ...data.national,
+            cities: data.national.cities.map((c) => ({
+              ...fallbackByCode[c.code],
+              ...c,
+            })),
+          },
+        };
+        setWeatherData(merged);
+        setWeatherError(null);
+        setWeatherLoading(false);
+      } catch (err) {
+        if (!cancelled) {
+          setWeatherError(`Network error: ${String(err)}`);
+          setWeatherLoading(false);
+        }
+      }
+    };
+    load();
+    const interval = setInterval(load, 10 * 60 * 1000); // 10 min
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -747,6 +1039,7 @@ export default function JarvisBriefing() {
           triggerBriefing: () => {},
           marketData: marketDataRef.current,
           marketSession: marketSessionRef.current,
+          weatherData: weatherDataRef.current,
         });
         return { type: "tool_result", tool_use_id: tb.id, content: result };
       });
@@ -884,8 +1177,16 @@ export default function JarvisBriefing() {
 
       <div className="relative z-10 grid grid-cols-12 gap-3 p-3">
         <div className="col-span-12 lg:col-span-3 space-y-3">
-          <LocalWeather highlighted={highlightedPanel === "local_weather"} />
-          <NationalWeather highlighted={highlightedPanel === "national_weather"} />
+          <LocalWeather
+            highlighted={highlightedPanel === "local_weather"}
+            weather={weatherData.local}
+            loading={weatherLoading}
+            error={weatherError}
+          />
+          <NationalWeather
+            highlighted={highlightedPanel === "national_weather"}
+            weather={weatherData}
+          />
         </div>
 
         <div className="col-span-12 lg:col-span-6 space-y-3">
