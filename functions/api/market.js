@@ -1,14 +1,16 @@
 // Cloudflare Pages Function: /api/market
 //
-// Returns live data for a hardcoded watchlist of stocks plus commodity ETFs.
-// Stocks come back clean from Twelve Data's free tier (no proxy nonsense),
-// so the values displayed are real share prices for the actual companies.
+// Returns live price data from Twelve Data.
+// Accepts optional ?symbols=AAPL,MSFT,WFC query param.
+// If no symbols param, falls back to the default watchlist (AAPL/NVDA/MSFT).
+// Always returns commodity ETFs.
 //
-// Edge-cached at Cloudflare for 60 seconds.
+// Cache key includes the symbol set so different watchlists cache separately.
+// Edge-cached at Cloudflare for 60 seconds per unique symbol set.
 
-const WATCHLIST = [
-  { id: "AAPL", name: "APPLE",    sym: "AAPL" },
-  { id: "NVDA", name: "NVIDIA",   sym: "NVDA" },
+const DEFAULT_WATCHLIST = [
+  { id: "AAPL", name: "APPLE",     sym: "AAPL" },
+  { id: "NVDA", name: "NVIDIA",    sym: "NVDA" },
   { id: "MSFT", name: "MICROSOFT", sym: "MSFT" },
 ];
 
@@ -21,12 +23,14 @@ const COMMODITIES = [
   { id: "SI", name: "SILVER",    sym: "SLV",  unit: "USD/SHARE (SLV)" },
 ];
 
-// Returns "open" | "afterhours" | "closed" based on Central Time.
-// "open"       → Mon-Fri 8:30 AM CT to 3:00 PM CT (regular US equity hours)
-// "afterhours" → Mon-Fri before 8:30 AM or after 3:00 PM (free tier doesn't
-//                actually carry extended-hours quotes, so values shown will
-//                be the most recent regular-session close)
-// "closed"     → Sat all day, Sun all day
+// Sanity-check a parsed price value — Twelve Data sometimes returns
+// a valid-looking response for garbage symbols with nonsensical values.
+function isSanePrice(val) {
+  if (val == null || isNaN(val)) return false;
+  if (val <= 0 || val > 1_000_000) return false;
+  return true;
+}
+
 function getMarketSession(now = new Date()) {
   const ctString = now.toLocaleString("en-US", { timeZone: "America/Chicago", hour12: false });
   const [datePart, timePart] = ctString.split(", ");
@@ -34,12 +38,9 @@ function getMarketSession(now = new Date()) {
   const [hour, minute] = timePart.split(":").map(Number);
   const ctDate = new Date(Date.UTC(year, month - 1, day));
   const dow = ctDate.getUTCDay();
-
   if (dow === 0 || dow === 6) return "closed";
   const minutesOfDay = hour * 60 + minute;
-  const REGULAR_OPEN = 8 * 60 + 30;  // 8:30 AM CT
-  const REGULAR_CLOSE = 15 * 60;     // 3:00 PM CT
-  if (minutesOfDay >= REGULAR_OPEN && minutesOfDay < REGULAR_CLOSE) return "open";
+  if (minutesOfDay >= 8 * 60 + 30 && minutesOfDay < 15 * 60) return "open";
   return "afterhours";
 }
 
@@ -61,7 +62,7 @@ function parseQuote(q) {
   const val = parseFloat(q.close);
   const chg = parseFloat(q.change);
   const pct = parseFloat(q.percent_change);
-  if (isNaN(val)) return { val: null, chg: null, pct: null, error: "invalid price" };
+  if (!isSanePrice(val)) return { val: null, chg: null, pct: null, error: "invalid or insane price" };
   return {
     val,
     chg: isNaN(chg) ? 0 : chg,
@@ -79,14 +80,24 @@ export async function onRequestGet(context) {
 
   if (!env.TWELVE_DATA_API_KEY) {
     return new Response(
-      JSON.stringify({
-        error: "TWELVE_DATA_API_KEY not configured. Set it in Cloudflare Pages → Settings → Environment Variables.",
-      }),
+      JSON.stringify({ error: "TWELVE_DATA_API_KEY not configured." }),
       { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
   }
 
-  const cacheKey = new Request(new URL(request.url).toString(), request);
+  // Parse optional ?symbols= param
+  const url = new URL(request.url);
+  const symbolsParam = url.searchParams.get("symbols");
+  let watchlistMeta;
+  if (symbolsParam) {
+    const requested = symbolsParam.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean).slice(0, 5);
+    watchlistMeta = requested.map((sym) => ({ id: sym, name: sym, sym }));
+  } else {
+    watchlistMeta = DEFAULT_WATCHLIST;
+  }
+
+  // Cache key includes the symbol set
+  const cacheKey = new Request(request.url, request);
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) {
@@ -96,7 +107,7 @@ export async function onRequestGet(context) {
   }
 
   const session = getMarketSession();
-  const watchlistSymbols = WATCHLIST.map((s) => s.sym);
+  const watchlistSymbols = watchlistMeta.map((s) => s.sym);
   const commoditySymbols = COMMODITIES.map((c) => c.sym);
   const allSymbols = [...watchlistSymbols, ...commoditySymbols];
 
@@ -110,33 +121,17 @@ export async function onRequestGet(context) {
     );
   }
 
-  const watchlist = WATCHLIST.map((meta) => {
+  const watchlist = watchlistMeta.map((meta) => {
     const parsed = parseQuote(quotes[meta.sym]);
-    return {
-      id: meta.id,
-      name: meta.name,
-      sourceSymbol: meta.sym,
-      ...parsed,
-    };
+    return { id: meta.id, name: meta.name, symbol: meta.sym, sourceSymbol: meta.sym, ...parsed };
   });
 
   const commodities = COMMODITIES.map((c) => {
     const parsed = parseQuote(quotes[c.sym]);
-    return {
-      id: c.id,
-      name: c.name,
-      unit: c.unit,
-      sourceSymbol: c.sym,
-      ...parsed,
-    };
+    return { id: c.id, name: c.name, unit: c.unit, sourceSymbol: c.sym, ...parsed };
   });
 
-  const payload = {
-    session,
-    fetchedAt: Date.now(),
-    watchlist,
-    commodities,
-  };
+  const payload = { session, fetchedAt: Date.now(), watchlist, commodities };
 
   const response = new Response(JSON.stringify(payload), {
     status: 200,
@@ -150,6 +145,24 @@ export async function onRequestGet(context) {
 
   context.waitUntil(cache.put(cacheKey, response.clone()));
   return response;
+}
+
+// Validate a single symbol against Twelve Data.
+// Returns { valid: bool, val, error }.
+export async function validateSymbol(sym, apiKey) {
+  try {
+    const resp = await fetch(
+      `https://api.twelvedata.com/quote?symbol=${encodeURIComponent(sym)}&apikey=${apiKey}`
+    );
+    if (!resp.ok) return { valid: false, error: `HTTP ${resp.status}` };
+    const data = await resp.json();
+    if (data.code) return { valid: false, error: data.message };
+    const val = parseFloat(data.close);
+    if (!isSanePrice(val)) return { valid: false, error: "price out of range" };
+    return { valid: true, val };
+  } catch (err) {
+    return { valid: false, error: String(err) };
+  }
 }
 
 export async function onRequestOptions() {
