@@ -9,18 +9,14 @@
 const TOOLS = [
   {
     name: "get_weather",
-    description: "Get current weather conditions and forecast for a location, or for the user's local area if no location is given. Returns temperature, conditions, and a brief forecast.",
+    description: "Get LIVE weather data from NOAA / National Weather Service. For 'local' scope, returns current observed conditions for The Colony, TX, plus four forecast periods (6 AM, noon, 6 PM, midnight) and any active alerts. For 'national' scope, returns current temperatures for major US cities. Always call this when the user asks about weather, conditions, temperature, forecast, rain, storms, or alerts — never make up weather values.",
     input_schema: {
       type: "object",
       properties: {
-        location: {
-          type: "string",
-          description: "Location name (city, region, or 'local' for the user's current area). Defaults to local.",
-        },
         scope: {
           type: "string",
           enum: ["local", "national"],
-          description: "Whether to give a local report or a national overview.",
+          description: "'local' for The Colony TX detail, 'national' for major-city overview. Defaults to local.",
         },
       },
     },
@@ -78,6 +74,11 @@ The watchlist currently contains three stocks fetched live from Twelve Data:
 These are real, accurate stock prices. Report them naturally: "Apple is at 187.42, up about half a percent." No proxy caveats needed — these are the actual share prices.
 
 Commodities are shown via ETF proxies (USO for crude, GLD for gold, UNG for nat gas, WEAT for wheat, CPER for copper, SLV for silver) since true futures contracts require a paid data feed. Report percentage changes naturally — those reflect actual commodity movement. If a user asks "how much is gold per ounce" or "what's oil per barrel", be honest that the dashboard shows ETF share prices and don't fabricate spot prices. Lead with the direction and percentage move.
+
+Weather data is LIVE from NOAA / National Weather Service:
+  - Local: real current observations for The Colony, TX (temperature, feels-like, humidity, wind, pressure, conditions) plus a 4-tile forecast for 6 AM, noon, 6 PM, midnight, plus any active Texas alerts.
+  - National: current temperatures for SFO, LAX, CHI, NYC, MIA, DFW.
+Always call get_weather for any weather question — never make up temperatures or conditions. Report them naturally: "It's 47 here, partly cloudy, with a light north wind. We're looking at a high near 52 today." If alerts are active, mention them.
 
 The session field tells you market context:
   - "open" → US stock market is open (Mon-Fri 8:30 AM – 3:00 PM CT). Watchlist values are live regular-session quotes.
