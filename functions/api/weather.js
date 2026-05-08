@@ -21,8 +21,8 @@
 const USER_AGENT = "JARVIS-Briefing/1.0 (jarvis-briefing.pages.dev)";
 
 const LOCAL_LOCATION = {
-  lat: 33.8907,
-  lon: -96.8903,
+  lat: 33.0807,
+  lon: -96.8867,
   name: "The Colony, TX",
 };
 
