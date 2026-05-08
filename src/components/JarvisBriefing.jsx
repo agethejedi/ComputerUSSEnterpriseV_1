@@ -222,11 +222,16 @@ const WEATHER_DATA = {
 // Market data is fetched live from /api/market. These fallbacks
 // are used briefly on first load before the fetch completes, and
 // during error states so the UI never goes blank.
-const FALLBACK_INDICES = [
-  { id: "DJIA", name: "DOW", futuresLabel: "DOW FUT", val: null, chg: null, pct: null },
-  { id: "NDX",  name: "NASDAQ", futuresLabel: "NASDAQ FUT", val: null, chg: null, pct: null },
-  { id: "SPX",  name: "S&P 500", futuresLabel: "S&P FUT", val: null, chg: null, pct: null },
+// Watchlist data is fetched live from /api/market. These fallbacks
+// are used briefly on first load before the fetch completes, and
+// during error states so the UI never goes blank.
+const FALLBACK_WATCHLIST = [
+  { id: "AAPL", name: "APPLE",     symbol: "AAPL", val: null, chg: null, pct: null },
+  { id: "NVDA", name: "NVIDIA",    symbol: "NVDA", val: null, chg: null, pct: null },
+  { id: "MSFT", name: "MICROSOFT", symbol: "MSFT", val: null, chg: null, pct: null },
 ];
+
+const FALLBACK_INDICES = FALLBACK_WATCHLIST; // legacy alias, removed once nothing uses it
 
 const FALLBACK_COMMODITIES = [
   { id: "CL", name: "CRUDE OIL", unit: "USD/SHARE (USO)", val: null, chg: null, pct: null },
@@ -237,32 +242,29 @@ const FALLBACK_COMMODITIES = [
   { id: "SI", name: "SILVER",    unit: "USD/SHARE (SLV)", val: null, chg: null, pct: null },
 ];
 
-// Determine which "session" the US equity market is in, based on Central Time.
-// Returns:
-//   "futures"  → Mon-Fri 12:00 AM CT to 8:29 AM CT (show as "DOW FUT" etc.)
-//   "regular"  → Mon-Fri 8:30 AM CT to 11:59 PM CT (show as "DOW" etc.)
-//   "closed"   → Sat all day, Sun all day (show last close)
+// Determine which "session" the US stock market is in, based on Central Time.
+// Mirrors the logic in functions/api/market.js. Returns:
+//   "open"       → Mon-Fri 8:30 AM CT to 3:00 PM CT (regular trading hours)
+//   "afterhours" → Mon-Fri outside those hours (early morning, after-close, evening)
+//   "closed"     → Sat all day, Sun all day
 //
-// Note: Free-tier data sources don't carry true CME futures contracts, so
-// the underlying number is always the cash-index quote. The label changes
-// based on time-of-day to match how Bloomberg/CNBC display things.
+// Note: Twelve Data free tier doesn't include extended-hours quotes, so
+// in "afterhours" we show the most recent regular-session close.
 function getMarketSession(now = new Date()) {
-  // Build a Date that represents "now" as it would be read in Chicago.
   const ctString = now.toLocaleString("en-US", { timeZone: "America/Chicago", hour12: false });
   // ctString looks like "5/8/2026, 14:23:45" — parse it.
   const [datePart, timePart] = ctString.split(", ");
   const [month, day, year] = datePart.split("/").map(Number);
   const [hour, minute] = timePart.split(":").map(Number);
-  // Compute day-of-week for that CT date (0=Sun, 6=Sat).
   const ctDate = new Date(Date.UTC(year, month - 1, day));
   const dow = ctDate.getUTCDay();
 
   if (dow === 0 || dow === 6) return "closed"; // Sat/Sun
-  // Weekday
   const minutesOfDay = hour * 60 + minute;
-  const REGULAR_OPEN = 8 * 60 + 30; // 8:30 AM CT
-  if (minutesOfDay < REGULAR_OPEN) return "futures";
-  return "regular";
+  const REGULAR_OPEN = 8 * 60 + 30;  // 8:30 AM CT
+  const REGULAR_CLOSE = 15 * 60;     // 3:00 PM CT
+  if (minutesOfDay >= REGULAR_OPEN && minutesOfDay < REGULAR_CLOSE) return "open";
+  return "afterhours";
 }
 
 // ============================================================
@@ -279,23 +281,22 @@ function executeToolCall(name, input, ctx) {
     case "get_market_data": {
       const symbols = (input.symbols || []).map((s) => s.toLowerCase());
       const wantsAll = symbols.includes("all");
-      const indices = ctx.marketData?.indices || [];
+      const watchlist = ctx.marketData?.watchlist || [];
       const commodities = ctx.marketData?.commodities || [];
-      const all = [...indices, ...commodities];
-      // Add session info so Claude can describe whether values are
-      // futures, regular-hours, or last-close readings.
+      const all = [...watchlist, ...commodities];
       const session = ctx.marketSession;
       const sessionNote = {
-        futures: "Currently overnight session (before 8:30 AM CT). Index values shown reflect the most recent cash close; in this app they are labeled as futures, but the underlying number does not yet incorporate today's overnight futures move on free-tier data.",
-        regular: "Currently regular US trading hours (8:30 AM – 11:59 PM CT, Mon-Fri). Index values are live cash-market quotes.",
-        closed: "Market is closed (weekend). Values shown are the most recent close.",
-      }[session];
+        open: "US stock market is open (Mon-Fri 8:30 AM – 3:00 PM CT). Watchlist values are live regular-session quotes.",
+        afterhours: "US stock market is in after-hours (weekday outside 8:30 AM – 3:00 PM CT). Watchlist values shown are the most recent regular-session close. Free-tier data does not include extended-hours quotes.",
+        closed: "US stock market is closed for the weekend. Watchlist values are Friday's close.",
+      }[session] || "Market session unknown.";
       if (wantsAll) {
         return JSON.stringify({ session, sessionNote, fetchedAt: ctx.marketData?.fetchedAt, data: all });
       }
       const matches = all.filter((item) =>
         symbols.some((s) =>
           item.id?.toLowerCase() === s ||
+          item.symbol?.toLowerCase() === s ||
           item.name?.toLowerCase().includes(s) ||
           s.includes(item.name?.toLowerCase().split(" ")[0] || "___")
         )
@@ -304,7 +305,7 @@ function executeToolCall(name, input, ctx) {
         session,
         sessionNote,
         fetchedAt: ctx.marketData?.fetchedAt,
-        data: matches.length ? matches : { note: "No matching symbols", available: all.map((a) => a.name) },
+        data: matches.length ? matches : { note: "No matching symbols", available: all.map((a) => `${a.name} (${a.symbol || a.id})`) },
       });
     }
     case "highlight_panel": {
@@ -432,7 +433,7 @@ function MiniSparkline({ up, color }) {
 }
 
 function StatusPill({ session }) {
-  if (session === "regular") {
+  if (session === "open") {
     return (
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#34D39922", border: "1px solid #34D39966", color: "#34D399" }}>
         <span className="w-1 h-1 rounded-full bg-emerald-400" style={{ animation: "corePulse 1.5s ease-in-out infinite" }} />
@@ -440,11 +441,11 @@ function StatusPill({ session }) {
       </span>
     );
   }
-  if (session === "futures") {
+  if (session === "afterhours") {
     return (
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#FBBF2422", border: "1px solid #FBBF2466", color: "#FBBF24" }}>
         <span className="w-1 h-1 rounded-full bg-amber-400" />
-        OVERNIGHT
+        AFTER HRS
       </span>
     );
   }
@@ -456,37 +457,35 @@ function StatusPill({ session }) {
   );
 }
 
-function FuturesPanel({ highlighted, indices, session, loading, error }) {
+function WatchlistPanel({ highlighted, watchlist, session, loading, error }) {
   const accent = "#67E8F9";
-  // Title flips between "INDEX FUTURES" overnight and "INDICES" during regular hours
-  const title = session === "futures" ? "INDEX FUTURES" : session === "regular" ? "MAJOR INDICES" : "INDICES · CLOSED";
+  // Title reflects market state for the watchlist
+  const title = session === "open" ? "WATCHLIST · LIVE" : session === "afterhours" ? "WATCHLIST · AFTER HRS" : "WATCHLIST · CLOSED";
   return (
-    <Panel title={title} code="MKT.01" accent={accent} highlighted={highlighted} panelKey="futures">
+    <Panel title={title} code="MKT.01" accent={accent} highlighted={highlighted} panelKey="watchlist">
       <div className="flex justify-end mb-1">
         <StatusPill session={session} />
       </div>
       <div className="space-y-2">
-        {indices.map((f) => {
-          const up = (f.chg ?? 0) >= 0;
+        {watchlist.map((stock) => {
+          const up = (stock.chg ?? 0) >= 0;
           const color = up ? "#34D399" : "#FB7185";
-          // Session-aware display name
-          const displayName = session === "futures" ? f.futuresLabel : f.name;
-          const hasData = f.val != null;
+          const hasData = stock.val != null;
           return (
-            <div key={f.id} className="flex items-center gap-3 py-1.5 border-b last:border-b-0" style={{ borderColor: `${accent}15` }}>
+            <div key={stock.id} className="flex items-center gap-3 py-1.5 border-b last:border-b-0" style={{ borderColor: `${accent}15` }}>
               <div className="w-20">
-                <div className="text-[10px] tracking-[0.2em] opacity-70">{displayName}</div>
-                <div className="text-[8px] tracking-[0.15em] opacity-40">{f.id}</div>
+                <div className="text-[10px] tracking-[0.2em] opacity-70">{stock.name}</div>
+                <div className="text-[8px] tracking-[0.15em] opacity-40">{stock.symbol || stock.id}</div>
               </div>
               <div className="flex-1"><MiniSparkline up={up} color={color} /></div>
               <div className="text-right">
                 {hasData ? (
                   <>
                     <div className="text-sm font-light tabular-nums" style={{ color: accent }}>
-                      {f.val.toLocaleString(undefined, { minimumFractionDigits: f.val < 100 ? 2 : 0, maximumFractionDigits: 2 })}
+                      {stock.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </div>
                     <div className="text-[10px] tabular-nums" style={{ color }}>
-                      {up ? "▲" : "▼"} {Math.abs(f.chg).toFixed(2)} ({up ? "+" : ""}{(f.pct ?? 0).toFixed(2)}%)
+                      {up ? "▲" : "▼"} {Math.abs(stock.chg).toFixed(2)} ({up ? "+" : ""}{(stock.pct ?? 0).toFixed(2)}%)
                     </div>
                   </>
                 ) : (
@@ -608,7 +607,7 @@ export default function JarvisBriefing() {
   // Live market data
   const [marketData, setMarketData] = useState({
     fetchedAt: null,
-    indices: FALLBACK_INDICES,
+    watchlist: FALLBACK_WATCHLIST,
     commodities: FALLBACK_COMMODITIES,
   });
   const [marketLoading, setMarketLoading] = useState(true);
@@ -647,7 +646,7 @@ export default function JarvisBriefing() {
         }
         setMarketData({
           fetchedAt: data.fetchedAt,
-          indices: data.indices?.length ? data.indices : FALLBACK_INDICES,
+          watchlist: data.watchlist?.length ? data.watchlist : FALLBACK_WATCHLIST,
           commodities: data.commodities?.length ? data.commodities : FALLBACK_COMMODITIES,
         });
         setMarketError(null);
@@ -938,9 +937,9 @@ export default function JarvisBriefing() {
         </div>
 
         <div className="col-span-12 lg:col-span-3 space-y-3">
-          <FuturesPanel
-            highlighted={highlightedPanel === "futures"}
-            indices={marketData.indices}
+          <WatchlistPanel
+            highlighted={highlightedPanel === "watchlist"}
+            watchlist={marketData.watchlist}
             session={marketSession}
             loading={marketLoading}
             error={marketError}
@@ -966,4 +965,3 @@ export default function JarvisBriefing() {
     </div>
   );
 }
-
