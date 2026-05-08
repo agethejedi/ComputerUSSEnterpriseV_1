@@ -380,24 +380,14 @@ function LocalWeather({ highlighted, weather, loading, error }) {
         </div>
       </div>
 
-      <div className="relative h-32 overflow-hidden" style={{ background: "#020617", border: `1px solid ${accent}22` }}>
-        <svg viewBox="0 0 200 130" className="w-full h-full">
-          {[20, 40, 60, 80, 100].map((y) => <line key={`h${y}`} x1="0" y1={y} x2="200" y2={y} stroke={accent} strokeWidth="0.3" opacity="0.15" />)}
-          {[40, 80, 120, 160].map((x) => <line key={`v${x}`} x1={x} y1="0" x2={x} y2="130" stroke={accent} strokeWidth="0.3" opacity="0.15" />)}
-          <path d="M 20 90 Q 60 70, 100 80 T 180 70 L 180 130 L 20 130 Z" fill={accent} opacity="0.05" />
-          <ellipse cx="80" cy="55" rx="35" ry="18" fill="#22D3EE" opacity="0.4" />
-          <ellipse cx="85" cy="55" rx="22" ry="10" fill="#A78BFA" opacity="0.5" />
-          <ellipse cx="88" cy="55" rx="10" ry="5" fill="#F472B6" opacity="0.6" />
-          <g style={{ transformOrigin: "100px 65px", animation: "spin 6s linear infinite" }}>
-            <line x1="100" y1="65" x2="100" y2="10" stroke={accent} strokeWidth="0.5" opacity="0.6" />
-            <path d="M 100 65 L 100 10 A 55 55 0 0 1 138 25 Z" fill={accent} opacity="0.08" />
-          </g>
-          <circle cx="100" cy="65" r="2" fill={accent} />
-          <text x="103" y="75" fill={accent} fontSize="5" opacity="0.7" fontFamily="monospace">YOU</text>
-        </svg>
-        <div className="absolute top-1 left-2 text-[8px] tracking-[0.2em]" style={{ color: accent, opacity: 0.7 }}>RADAR · 1KM</div>
-        <div className="absolute bottom-1 right-2 text-[8px] tracking-[0.2em]" style={{ color: accent, opacity: 0.5 }}>{c ? "LIVE" : "—"}</div>
-      </div>
+      <RadarMap
+        center={[33.8907, -96.8903]}
+        zoom={7}
+        markers={[{ lat: 33.8907, lon: -96.8903, label: "YOU", isYou: true }]}
+        className="h-32"
+        showLabels={true}
+        accent={accent}
+      />
 
       <div className="mt-2 grid grid-cols-4 gap-2">
         {tiles.map((t) => (
@@ -449,8 +439,19 @@ function loadLeaflet() {
   return leafletLoadPromise;
 }
 
-function NationalWeather({ highlighted, weather }) {
-  const accent = "#7DD3FC";
+// ---------------------------------------------------------------------------
+// RadarMap — Leaflet map with animated RainViewer radar overlay.
+// Used by both the National and Local weather panels. Configurable center,
+// zoom, and overlay markers.
+// ---------------------------------------------------------------------------
+function RadarMap({
+  center,             // [lat, lon]
+  zoom,               // initial zoom level
+  markers,            // [{ lat, lon, label, isYou }]
+  className,          // wrapper className for height etc.
+  showLabels = true,  // overlay city/state labels (faint)
+  accent = "#7DD3FC",
+}) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const radarLayersRef = useRef([]);
@@ -458,20 +459,20 @@ function NationalWeather({ highlighted, weather }) {
   const animPosRef = useRef(0);
   const framesRef = useRef([]);
   const apiHostRef = useRef(null);
+  const cancelledRef = useRef(false);
   const [timestamp, setTimestamp] = useState("");
   const [mapReady, setMapReady] = useState(false);
-  const cities = weather?.national?.cities || [];
 
   // Initialize map once
   useEffect(() => {
     let cancelled = false;
+    cancelledRef.current = false;
     let observer = null;
 
     (async () => {
       const L = await loadLeaflet();
       if (cancelled || !L || !mapRef.current) return;
 
-      // Center on continental US
       const map = L.map(mapRef.current, {
         zoomControl: false,
         attributionControl: false,
@@ -480,25 +481,25 @@ function NationalWeather({ highlighted, weather }) {
         doubleClickZoom: false,
         keyboard: false,
         touchZoom: false,
-      }).setView([39.5, -98.35], 3);
+      }).setView(center, zoom);
 
-      // Dark base layer that matches the HUD theme
+      // Dark base
       L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", {
-        maxZoom: 10,
+        maxZoom: 12,
         subdomains: "abcd",
       }).addTo(map);
 
-      // Subtle country/state labels overlay
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", {
-        maxZoom: 10,
-        subdomains: "abcd",
-        opacity: 0.5,
-      }).addTo(map);
+      if (showLabels) {
+        L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", {
+          maxZoom: 12,
+          subdomains: "abcd",
+          opacity: 0.5,
+        }).addTo(map);
+      }
 
       mapInstanceRef.current = map;
       setMapReady(true);
 
-      // Watch for container resize so the map redraws correctly when panels reflow
       if (typeof ResizeObserver !== "undefined") {
         observer = new ResizeObserver(() => map.invalidateSize());
         observer.observe(mapRef.current);
@@ -507,6 +508,7 @@ function NationalWeather({ highlighted, weather }) {
 
     return () => {
       cancelled = true;
+      cancelledRef.current = true;
       if (observer) observer.disconnect();
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
       if (mapInstanceRef.current) {
@@ -514,42 +516,52 @@ function NationalWeather({ highlighted, weather }) {
         mapInstanceRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Add city markers + temperatures on top
+  // Render markers (re-runs when markers array changes)
   useEffect(() => {
     const L = window.L;
     const map = mapInstanceRef.current;
     if (!L || !map || !mapReady) return;
 
-    // Clear any existing markers
     map.eachLayer((layer) => {
-      if (layer.options?.isCityLabel) map.removeLayer(layer);
+      if (layer.options?.isOverlayMarker) map.removeLayer(layer);
     });
 
-    cities.forEach((city) => {
-      if (city.lat == null || city.lon == null) return;
-      const html = `
-        <div style="
-          font-family: ui-monospace, 'SF Mono', monospace;
-          color: ${accent};
-          font-size: 10px;
-          letter-spacing: 0.05em;
-          text-shadow: 0 0 4px ${accent}, 0 0 2px #000, 0 0 2px #000;
-          white-space: nowrap;
-          transform: translate(8px, -50%);
-        ">${city.code} ${city.tempF != null ? city.tempF + "°" : "—"}</div>
-        <div style="
-          width: 4px; height: 4px;
-          background: ${accent};
-          box-shadow: 0 0 4px ${accent};
-          border-radius: 50%;
-        "></div>
-      `;
-      const icon = L.divIcon({ html, className: "", iconSize: [4, 4], iconAnchor: [2, 2] });
-      L.marker([city.lat, city.lon], { icon, isCityLabel: true, interactive: false }).addTo(map);
+    (markers || []).forEach((m) => {
+      if (m.lat == null || m.lon == null) return;
+      const dotSize = m.isYou ? 8 : 4;
+      const dotStyle = m.isYou
+        ? `
+            width: ${dotSize}px; height: ${dotSize}px;
+            background: ${accent};
+            box-shadow: 0 0 8px ${accent}, 0 0 16px ${accent};
+            border-radius: 50%;
+            animation: corePulse 1.5s ease-in-out infinite;
+          `
+        : `
+            width: ${dotSize}px; height: ${dotSize}px;
+            background: ${accent};
+            box-shadow: 0 0 4px ${accent};
+            border-radius: 50%;
+          `;
+      const labelHtml = m.label
+        ? `<div style="
+            font-family: ui-monospace, 'SF Mono', monospace;
+            color: ${accent};
+            font-size: 10px;
+            letter-spacing: 0.05em;
+            text-shadow: 0 0 4px ${accent}, 0 0 2px #000, 0 0 2px #000;
+            white-space: nowrap;
+            transform: translate(${dotSize + 4}px, -50%);
+          ">${m.label}</div>`
+        : "";
+      const html = `${labelHtml}<div style="${dotStyle}"></div>`;
+      const icon = L.divIcon({ html, className: "", iconSize: [dotSize, dotSize], iconAnchor: [dotSize / 2, dotSize / 2] });
+      L.marker([m.lat, m.lon], { icon, isOverlayMarker: true, interactive: false }).addTo(map);
     });
-  }, [cities, mapReady]);
+  }, [markers, mapReady, accent]);
 
   // Fetch RainViewer frames + animate
   useEffect(() => {
@@ -564,7 +576,6 @@ function NationalWeather({ highlighted, weather }) {
         if (cancelled) return;
 
         apiHostRef.current = data.host;
-        // past + nowcast frames combined; fall back to past only
         const past = data.radar?.past || [];
         const nowcast = data.radar?.nowcast || [];
         framesRef.current = [...past, ...nowcast];
@@ -592,14 +603,12 @@ function NationalWeather({ highlighted, weather }) {
           zIndex: 100,
         }).addTo(map);
 
-        // Crossfade in
         let opacity = 0;
         const fadeIn = setInterval(() => {
           opacity += 0.15;
           if (opacity >= 0.7) {
             opacity = 0.7;
             clearInterval(fadeIn);
-            // Remove old layers (keep only newest 2 to avoid blank flashes)
             while (radarLayersRef.current.length > 1) {
               const old = radarLayersRef.current.shift();
               if (old) map.removeLayer(old);
@@ -610,7 +619,6 @@ function NationalWeather({ highlighted, weather }) {
 
         radarLayersRef.current.push(layer);
 
-        // Update timestamp display
         const date = new Date(frame.time * 1000);
         const ctTime = date.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
         setTimestamp(`${ctTime} CT`);
@@ -635,20 +643,39 @@ function NationalWeather({ highlighted, weather }) {
   }, [mapReady]);
 
   return (
-    <Panel title="NATIONAL // CONUS" code="WX.02" accent={accent} highlighted={highlighted} panelKey="national_weather">
-      <div className="relative h-44 overflow-hidden" style={{ background: "#020617", border: `1px solid ${accent}22` }}>
-        <div ref={mapRef} className="absolute inset-0" style={{ background: "#020617" }} />
-        {!mapReady && (
-          <div className="absolute inset-0 flex items-center justify-center text-[10px] tracking-[0.2em] opacity-60" style={{ color: accent }}>
-            LOADING RADAR…
-          </div>
-        )}
-        <div className="absolute top-1 left-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>RAINVIEWER · LIVE</div>
-        <div className="absolute top-1 right-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none tabular-nums" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>{timestamp}</div>
-        <div className="absolute bottom-1 right-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none flex gap-3" style={{ color: accent, opacity: 0.7, textShadow: "0 0 4px #000" }}>
-          <span>NOAA TEMPS</span>
+    <div className={`relative overflow-hidden ${className || ""}`} style={{ background: "#020617", border: `1px solid ${accent}22` }}>
+      <div ref={mapRef} className="absolute inset-0" style={{ background: "#020617" }} />
+      {!mapReady && (
+        <div className="absolute inset-0 flex items-center justify-center text-[10px] tracking-[0.2em] opacity-60" style={{ color: accent }}>
+          LOADING RADAR…
         </div>
-      </div>
+      )}
+      <div className="absolute top-1 left-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>RAINVIEWER · LIVE</div>
+      <div className="absolute top-1 right-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none tabular-nums" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>{timestamp}</div>
+    </div>
+  );
+}
+
+function NationalWeather({ highlighted, weather }) {
+  const accent = "#7DD3FC";
+  const cities = weather?.national?.cities || [];
+  const markers = cities
+    .filter((c) => c.lat != null && c.lon != null)
+    .map((c) => ({
+      lat: c.lat,
+      lon: c.lon,
+      label: `${c.code} ${c.tempF != null ? c.tempF + "°" : "—"}`,
+    }));
+
+  return (
+    <Panel title="NATIONAL // CONUS" code="WX.02" accent={accent} highlighted={highlighted} panelKey="national_weather">
+      <RadarMap
+        center={[39.5, -98.35]}
+        zoom={3}
+        markers={markers}
+        className="h-44"
+        accent={accent}
+      />
     </Panel>
   );
 }
