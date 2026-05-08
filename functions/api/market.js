@@ -17,9 +17,9 @@
 // have extended-hours quotes that loosely reflect futures direction.
 
 const INDICES = [
-  { id: "DJIA", name: "DOW",     futuresLabel: "DOW FUT",    cashSym: "DJI",  proxySym: "DIA" },
-  { id: "NDX",  name: "NASDAQ",  futuresLabel: "NASDAQ FUT", cashSym: "IXIC", proxySym: "QQQ" },
-  { id: "SPX",  name: "S&P 500", futuresLabel: "S&P FUT",    cashSym: "SPX",  proxySym: "SPY" },
+  { id: "DJIA", name: "DOW",     futuresLabel: "DOW FUT",    cashSym: ".DJI",  proxySym: "DIA" },
+  { id: "NDX",  name: "NASDAQ",  futuresLabel: "NASDAQ FUT", cashSym: ".IXIC", proxySym: "QQQ" },
+  { id: "SPX",  name: "S&P 500", futuresLabel: "S&P FUT",    cashSym: ".SPX",  proxySym: "SPY" },
 ];
 
 const COMMODITIES = [
