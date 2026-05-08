@@ -219,20 +219,51 @@ const WEATHER_DATA = {
   },
 };
 
-const FUTURES = [
-  { sym: "DJIA", name: "DOW FUT", val: 38247, chg: +152, pct: +0.40 },
-  { sym: "NDX", name: "NASDAQ FUT", val: 17891, chg: -42, pct: -0.23 },
-  { sym: "SPX", name: "S&P FUT", val: 5072.5, chg: +8.25, pct: +0.16 },
+// Market data is fetched live from /api/market. These fallbacks
+// are used briefly on first load before the fetch completes, and
+// during error states so the UI never goes blank.
+const FALLBACK_INDICES = [
+  { id: "DJIA", name: "DOW", futuresLabel: "DOW FUT", val: null, chg: null, pct: null },
+  { id: "NDX",  name: "NASDAQ", futuresLabel: "NASDAQ FUT", val: null, chg: null, pct: null },
+  { id: "SPX",  name: "S&P 500", futuresLabel: "S&P FUT", val: null, chg: null, pct: null },
 ];
 
-const COMMODITIES = [
-  { sym: "CL", name: "CRUDE OIL", val: 82.47, chg: +1.12, unit: "USD/BBL" },
-  { sym: "GC", name: "GOLD", val: 2041.30, chg: -8.40, unit: "USD/OZ" },
-  { sym: "NG", name: "NAT GAS", val: 2.87, chg: +0.05, unit: "USD/MMBTU" },
-  { sym: "ZW", name: "WHEAT", val: 6.12, chg: -0.08, unit: "USD/BU" },
-  { sym: "HG", name: "COPPER", val: 3.84, chg: +0.02, unit: "USD/LB" },
-  { sym: "SI", name: "SILVER", val: 22.91, chg: +0.18, unit: "USD/OZ" },
+const FALLBACK_COMMODITIES = [
+  { id: "CL", name: "CRUDE OIL", unit: "USD/SHARE (USO)", val: null, chg: null, pct: null },
+  { id: "GC", name: "GOLD",      unit: "USD/SHARE (GLD)", val: null, chg: null, pct: null },
+  { id: "NG", name: "NAT GAS",   unit: "USD/SHARE (UNG)", val: null, chg: null, pct: null },
+  { id: "ZW", name: "WHEAT",     unit: "USD/SHARE (WEAT)", val: null, chg: null, pct: null },
+  { id: "HG", name: "COPPER",    unit: "USD/SHARE (CPER)", val: null, chg: null, pct: null },
+  { id: "SI", name: "SILVER",    unit: "USD/SHARE (SLV)", val: null, chg: null, pct: null },
 ];
+
+// Determine which "session" the US equity market is in, based on Central Time.
+// Returns:
+//   "futures"  → Mon-Fri 12:00 AM CT to 8:29 AM CT (show as "DOW FUT" etc.)
+//   "regular"  → Mon-Fri 8:30 AM CT to 11:59 PM CT (show as "DOW" etc.)
+//   "closed"   → Sat all day, Sun all day (show last close)
+//
+// Note: Free-tier data sources don't carry true CME futures contracts, so
+// the underlying number is always the cash-index quote. The label changes
+// based on time-of-day to match how Bloomberg/CNBC display things.
+function getMarketSession(now = new Date()) {
+  // Build a Date that represents "now" as it would be read in Chicago.
+  const ctString = now.toLocaleString("en-US", { timeZone: "America/Chicago", hour12: false });
+  // ctString looks like "5/8/2026, 14:23:45" — parse it.
+  const [datePart, timePart] = ctString.split(", ");
+  const [month, day, year] = datePart.split("/").map(Number);
+  const [hour, minute] = timePart.split(":").map(Number);
+  // Compute day-of-week for that CT date (0=Sun, 6=Sat).
+  const ctDate = new Date(Date.UTC(year, month - 1, day));
+  const dow = ctDate.getUTCDay();
+
+  if (dow === 0 || dow === 6) return "closed"; // Sat/Sun
+  // Weekday
+  const minutesOfDay = hour * 60 + minute;
+  const REGULAR_OPEN = 8 * 60 + 30; // 8:30 AM CT
+  if (minutesOfDay < REGULAR_OPEN) return "futures";
+  return "regular";
+}
 
 // ============================================================
 // TOOL EXECUTORS
@@ -248,16 +279,33 @@ function executeToolCall(name, input, ctx) {
     case "get_market_data": {
       const symbols = (input.symbols || []).map((s) => s.toLowerCase());
       const wantsAll = symbols.includes("all");
-      const all = [...FUTURES, ...COMMODITIES];
-      if (wantsAll) return JSON.stringify(all);
+      const indices = ctx.marketData?.indices || [];
+      const commodities = ctx.marketData?.commodities || [];
+      const all = [...indices, ...commodities];
+      // Add session info so Claude can describe whether values are
+      // futures, regular-hours, or last-close readings.
+      const session = ctx.marketSession;
+      const sessionNote = {
+        futures: "Currently overnight session (before 8:30 AM CT). Index values shown reflect the most recent cash close; in this app they are labeled as futures, but the underlying number does not yet incorporate today's overnight futures move on free-tier data.",
+        regular: "Currently regular US trading hours (8:30 AM – 11:59 PM CT, Mon-Fri). Index values are live cash-market quotes.",
+        closed: "Market is closed (weekend). Values shown are the most recent close.",
+      }[session];
+      if (wantsAll) {
+        return JSON.stringify({ session, sessionNote, fetchedAt: ctx.marketData?.fetchedAt, data: all });
+      }
       const matches = all.filter((item) =>
         symbols.some((s) =>
-          item.sym.toLowerCase() === s ||
-          item.name.toLowerCase().includes(s) ||
-          s.includes(item.name.toLowerCase().split(" ")[0])
+          item.id?.toLowerCase() === s ||
+          item.name?.toLowerCase().includes(s) ||
+          s.includes(item.name?.toLowerCase().split(" ")[0] || "___")
         )
       );
-      return JSON.stringify(matches.length ? matches : { note: "No matching symbols found", available: all.map((a) => a.name) });
+      return JSON.stringify({
+        session,
+        sessionNote,
+        fetchedAt: ctx.marketData?.fetchedAt,
+        data: matches.length ? matches : { note: "No matching symbols", available: all.map((a) => a.name) },
+      });
     }
     case "highlight_panel": {
       ctx.setHighlightedPanel(input.panel);
@@ -383,56 +431,111 @@ function MiniSparkline({ up, color }) {
   );
 }
 
-function FuturesPanel({ highlighted }) {
-  const accent = "#67E8F9";
+function StatusPill({ session }) {
+  if (session === "regular") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#34D39922", border: "1px solid #34D39966", color: "#34D399" }}>
+        <span className="w-1 h-1 rounded-full bg-emerald-400" style={{ animation: "corePulse 1.5s ease-in-out infinite" }} />
+        LIVE
+      </span>
+    );
+  }
+  if (session === "futures") {
+    return (
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#FBBF2422", border: "1px solid #FBBF2466", color: "#FBBF24" }}>
+        <span className="w-1 h-1 rounded-full bg-amber-400" />
+        OVERNIGHT
+      </span>
+    );
+  }
   return (
-    <Panel title="INDEX FUTURES" code="MKT.01" accent={accent} highlighted={highlighted} panelKey="futures">
+    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#64748B22", border: "1px solid #64748B66", color: "#94A3B8" }}>
+      <span className="w-1 h-1 rounded-full bg-slate-400" />
+      CLOSED
+    </span>
+  );
+}
+
+function FuturesPanel({ highlighted, indices, session, loading, error }) {
+  const accent = "#67E8F9";
+  // Title flips between "INDEX FUTURES" overnight and "INDICES" during regular hours
+  const title = session === "futures" ? "INDEX FUTURES" : session === "regular" ? "MAJOR INDICES" : "INDICES · CLOSED";
+  return (
+    <Panel title={title} code="MKT.01" accent={accent} highlighted={highlighted} panelKey="futures">
+      <div className="flex justify-end mb-1">
+        <StatusPill session={session} />
+      </div>
       <div className="space-y-2">
-        {FUTURES.map((f) => {
-          const up = f.chg >= 0;
+        {indices.map((f) => {
+          const up = (f.chg ?? 0) >= 0;
           const color = up ? "#34D399" : "#FB7185";
+          // Session-aware display name
+          const displayName = session === "futures" ? f.futuresLabel : f.name;
+          const hasData = f.val != null;
           return (
-            <div key={f.sym} className="flex items-center gap-3 py-1.5 border-b last:border-b-0" style={{ borderColor: `${accent}15` }}>
-              <div className="w-16">
-                <div className="text-[10px] tracking-[0.2em] opacity-70">{f.name}</div>
-                <div className="text-[8px] tracking-[0.15em] opacity-40">{f.sym}</div>
+            <div key={f.id} className="flex items-center gap-3 py-1.5 border-b last:border-b-0" style={{ borderColor: `${accent}15` }}>
+              <div className="w-20">
+                <div className="text-[10px] tracking-[0.2em] opacity-70">{displayName}</div>
+                <div className="text-[8px] tracking-[0.15em] opacity-40">{f.id}</div>
               </div>
               <div className="flex-1"><MiniSparkline up={up} color={color} /></div>
               <div className="text-right">
-                <div className="text-sm font-light tabular-nums" style={{ color: accent }}>{f.val.toLocaleString(undefined, { minimumFractionDigits: f.val < 100 ? 2 : 0 })}</div>
-                <div className="text-[10px] tabular-nums" style={{ color }}>{up ? "▲" : "▼"} {Math.abs(f.chg).toFixed(2)} ({up ? "+" : ""}{f.pct}%)</div>
+                {hasData ? (
+                  <>
+                    <div className="text-sm font-light tabular-nums" style={{ color: accent }}>
+                      {f.val.toLocaleString(undefined, { minimumFractionDigits: f.val < 100 ? 2 : 0, maximumFractionDigits: 2 })}
+                    </div>
+                    <div className="text-[10px] tabular-nums" style={{ color }}>
+                      {up ? "▲" : "▼"} {Math.abs(f.chg).toFixed(2)} ({up ? "+" : ""}{(f.pct ?? 0).toFixed(2)}%)
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-[10px] opacity-40 italic">{loading ? "loading…" : error ? "no data" : "—"}</div>
+                )}
               </div>
             </div>
           );
         })}
       </div>
+      {error && <div className="mt-2 text-[9px]" style={{ color: "#FB7185" }}>{error}</div>}
     </Panel>
   );
 }
 
-function CommoditiesPanel({ highlighted }) {
+function CommoditiesPanel({ highlighted, commodities, session, loading, error }) {
   const accent = "#67E8F9";
   return (
     <Panel title="COMMODITIES" code="MKT.02" accent={accent} highlighted={highlighted} panelKey="commodities">
+      <div className="flex justify-end mb-1">
+        <StatusPill session={session} />
+      </div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-2">
-        {COMMODITIES.map((c) => {
-          const up = c.chg >= 0;
+        {commodities.map((c) => {
+          const up = (c.chg ?? 0) >= 0;
           const color = up ? "#34D399" : "#FB7185";
+          const hasData = c.val != null;
           return (
-            <div key={c.sym} className="py-1 border-b" style={{ borderColor: `${accent}10` }}>
+            <div key={c.id} className="py-1 border-b" style={{ borderColor: `${accent}10` }}>
               <div className="flex justify-between items-baseline">
                 <span className="text-[10px] tracking-[0.2em] opacity-70">{c.name}</span>
-                <span className="text-[8px] opacity-40 tracking-[0.1em]">{c.sym}</span>
+                <span className="text-[8px] opacity-40 tracking-[0.1em]">{c.id}</span>
               </div>
-              <div className="flex justify-between items-baseline mt-0.5">
-                <span className="text-sm font-light tabular-nums" style={{ color: accent }}>{c.val.toFixed(2)}</span>
-                <span className="text-[10px] tabular-nums" style={{ color }}>{up ? "+" : ""}{c.chg.toFixed(2)}</span>
-              </div>
-              <div className="text-[8px] opacity-30 tracking-[0.1em] mt-0.5">{c.unit}</div>
+              {hasData ? (
+                <>
+                  <div className="flex justify-between items-baseline mt-0.5">
+                    <span className="text-sm font-light tabular-nums" style={{ color: accent }}>{c.val.toFixed(2)}</span>
+                    <span className="text-[10px] tabular-nums" style={{ color }}>{up ? "+" : ""}{c.chg.toFixed(2)}</span>
+                  </div>
+                  <div className="text-[8px] opacity-30 tracking-[0.1em] mt-0.5">{c.unit}</div>
+                </>
+              ) : (
+                <div className="text-[10px] opacity-40 italic mt-0.5">{loading ? "loading…" : error ? "no data" : "—"}</div>
+              )}
             </div>
           );
         })}
       </div>
+      {error && <div className="mt-2 text-[9px]" style={{ color: "#FB7185" }}>{error}</div>}
     </Panel>
   );
 }
@@ -502,6 +605,22 @@ export default function JarvisBriefing() {
   const [voiceError, setVoiceError] = useState(null);
   const [interimTranscript, setInterimTranscript] = useState("");
 
+  // Live market data
+  const [marketData, setMarketData] = useState({
+    fetchedAt: null,
+    indices: FALLBACK_INDICES,
+    commodities: FALLBACK_COMMODITIES,
+  });
+  const [marketLoading, setMarketLoading] = useState(true);
+  const [marketError, setMarketError] = useState(null);
+  const marketSession = getMarketSession(now);
+
+  // Keep refs in sync so the tool executor (which is created once) can read latest values
+  const marketDataRef = useRef(marketData);
+  const marketSessionRef = useRef(marketSession);
+  useEffect(() => { marketDataRef.current = marketData; }, [marketData]);
+  useEffect(() => { marketSessionRef.current = marketSession; }, [marketSession]);
+
   const apiMessagesRef = useRef([]);
   const recognitionRef = useRef(null);
   const isListeningRef = useRef(false);
@@ -509,6 +628,43 @@ export default function JarvisBriefing() {
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  // Fetch market data on mount + every 60 seconds.
+  // The Cloudflare Function caches at the edge for 60s too, so this
+  // only actually hits Twelve Data once per minute across all users.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/market");
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) {
+          setMarketError(data.error || "Failed to load market data");
+          setMarketLoading(false);
+          return;
+        }
+        setMarketData({
+          fetchedAt: data.fetchedAt,
+          indices: data.indices?.length ? data.indices : FALLBACK_INDICES,
+          commodities: data.commodities?.length ? data.commodities : FALLBACK_COMMODITIES,
+        });
+        setMarketError(null);
+        setMarketLoading(false);
+      } catch (err) {
+        if (!cancelled) {
+          setMarketError(`Network error: ${String(err)}`);
+          setMarketLoading(false);
+        }
+      }
+    };
+    load();
+    const interval = setInterval(load, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   // Pre-warm voices list (some browsers load it async)
@@ -590,6 +746,8 @@ export default function JarvisBriefing() {
         const result = executeToolCall(tb.name, tb.input, {
           setHighlightedPanel,
           triggerBriefing: () => {},
+          marketData: marketDataRef.current,
+          marketSession: marketSessionRef.current,
         });
         return { type: "tool_result", tool_use_id: tb.id, content: result };
       });
@@ -780,14 +938,29 @@ export default function JarvisBriefing() {
         </div>
 
         <div className="col-span-12 lg:col-span-3 space-y-3">
-          <FuturesPanel highlighted={highlightedPanel === "futures"} />
-          <CommoditiesPanel highlighted={highlightedPanel === "commodities"} />
+          <FuturesPanel
+            highlighted={highlightedPanel === "futures"}
+            indices={marketData.indices}
+            session={marketSession}
+            loading={marketLoading}
+            error={marketError}
+          />
+          <CommoditiesPanel
+            highlighted={highlightedPanel === "commodities"}
+            commodities={marketData.commodities}
+            session={marketSession}
+            loading={marketLoading}
+            error={marketError}
+          />
         </div>
       </div>
 
       <div className="relative z-10 flex items-center justify-between px-6 py-2 border-t text-[9px] tracking-[0.25em] opacity-50" style={{ borderColor: "#7DD3FC22" }}>
         <span>HOLD SPACEBAR · OR TAP MIC TO SPEAK</span>
-        <span>DATA · MOCK // PROTOTYPE</span>
+        <span>
+          MARKET · {marketLoading ? "LOADING…" : marketError ? "ERROR" : "LIVE / TWELVE DATA"} ·
+          {marketData.fetchedAt ? ` ${new Date(marketData.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}
+        </span>
         <span>SONNET 4.6 · ENG-US</span>
       </div>
     </div>
