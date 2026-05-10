@@ -152,31 +152,55 @@ class HoloScene {
         (gltf) => {
           this.clearCurrentObject();
           const model = gltf.scene;
-          // Auto-center and scale
+
+          // Add to scene first so world transforms are computed correctly
+          this.pivot.add(model);
+
+          // Force matrix update so Box3 gets accurate bounds
+          model.updateMatrixWorld(true);
           const box = new THREE.Box3().setFromObject(model);
-          const center = box.getCenter(new THREE.Vector3());
           const size = box.getSize(new THREE.Vector3());
+          const center = box.getCenter(new THREE.Vector3());
           const maxDim = Math.max(size.x, size.y, size.z);
-          const targetSize = 2.0;
-          const scaleF = (targetSize / maxDim) * scale;
-          model.scale.setScalar(scaleF);
-          model.position.sub(center.multiplyScalar(scaleF));
-          // Apply holographic material tint
+
+          // Guard against degenerate models (zero size before textures load)
+          if (maxDim > 0 && isFinite(maxDim)) {
+            const targetSize = 2.2;
+            const scaleF = targetSize / maxDim;
+            model.scale.setScalar(scaleF);
+            // Re-compute center after scaling
+            model.updateMatrixWorld(true);
+            const box2 = new THREE.Box3().setFromObject(model);
+            const center2 = box2.getCenter(new THREE.Vector3());
+            // Offset model so it's centered at origin
+            model.position.set(-center2.x, -center2.y, -center2.z);
+          }
+
+          // Apply subtle holographic emissive tint
           model.traverse((child) => {
-            if (child.isMesh) {
-              child.material = child.material.clone();
-              if (child.material.color) {
-                child.material.emissive = new THREE.Color(0x0a1a2e);
-                child.material.emissiveIntensity = 0.3;
-              }
+            if (child.isMesh && child.material) {
+              const mats = Array.isArray(child.material) ? child.material : [child.material];
+              mats.forEach((mat) => {
+                if (mat.emissive) {
+                  mat.emissive.set(0x0a1a2e);
+                  mat.emissiveIntensity = 0.2;
+                }
+              });
             }
           });
-          this.pivot.add(model);
+
           this.currentObject = model;
           resolve(model);
         },
         undefined,
-        reject
+        (err) => {
+          // Remove from pivot if load failed after adding
+          if (this.pivot.children.length > 0) {
+            const last = this.pivot.children[this.pivot.children.length - 1];
+            this.pivot.remove(last);
+          }
+          reject(err);
+        }
       );
     });
   }

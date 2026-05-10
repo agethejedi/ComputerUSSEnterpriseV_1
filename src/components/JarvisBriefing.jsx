@@ -539,6 +539,8 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
   useEffect(() => {
     if (!mapReady) return;
     let cancelled = false;
+    let activeFadeIn = null; // track active fade interval so we can kill it on cleanup
+
     const start = async () => {
       try {
         const resp = await fetch("https://api.rainviewer.com/public/weather-maps.json");
@@ -546,44 +548,73 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
         const data = await resp.json();
         if (cancelled) return;
         apiHostRef.current = data.host;
+        // Only use "past" frames — nowcast tiles require many more requests
+        // and don't add much visual value for a dashboard background map
         const past = data.radar?.past || [];
-        const nowcast = data.radar?.nowcast || [];
-        framesRef.current = [...past, ...nowcast];
+        framesRef.current = past;
         if (!framesRef.current.length) return;
+        // Start at the most recent frame
         animPosRef.current = past.length - 1;
-        const playAnimation = () => {
+
+        const tick = () => {
+          if (cancelled) return;
           const L = window.L;
           const map = mapInstanceRef.current;
           const frames = framesRef.current;
-          if (!L || !map || !frames.length || cancelled) return;
-          const tick = () => {
-            if (cancelled) return;
-            const frame = frames[animPosRef.current];
-            const tileUrl = `${apiHostRef.current}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
-            const layer = L.tileLayer(tileUrl, { tileSize: 256, opacity: 0.0, zIndex: 100 }).addTo(map);
-            let opacity = 0;
-            const fadeIn = setInterval(() => {
-              opacity += 0.15;
-              if (opacity >= 0.7) { opacity = 0.7; clearInterval(fadeIn); while (radarLayersRef.current.length > 1) { const old = radarLayersRef.current.shift(); if (old) map.removeLayer(old); } }
-              layer.setOpacity(opacity);
-            }, 30);
-            radarLayersRef.current.push(layer);
-            const date = new Date(frame.time * 1000);
-            const ctTime = date.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
-            setTimestamp(`${ctTime} CT`);
-            animPosRef.current = (animPosRef.current + 1) % frames.length;
-            animTimerRef.current = setTimeout(tick, 800);
-          };
-          tick();
+          if (!L || !map || !frames.length) return;
+
+          const frame = frames[animPosRef.current];
+          const tileUrl = `${apiHostRef.current}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+          const layer = L.tileLayer(tileUrl, { tileSize: 256, opacity: 0.0, zIndex: 100 }).addTo(map);
+
+          let opacity = 0;
+          // Clear any previous fade before starting a new one
+          if (activeFadeIn) clearInterval(activeFadeIn);
+          activeFadeIn = setInterval(() => {
+            if (cancelled) { clearInterval(activeFadeIn); return; }
+            opacity += 0.2;
+            if (opacity >= 0.7) {
+              opacity = 0.7;
+              clearInterval(activeFadeIn);
+              activeFadeIn = null;
+              // Keep only the current layer, remove old ones
+              while (radarLayersRef.current.length > 1) {
+                const old = radarLayersRef.current.shift();
+                if (old && mapInstanceRef.current) mapInstanceRef.current.removeLayer(old);
+              }
+            }
+            layer.setOpacity(opacity);
+          }, 40);
+
+          radarLayersRef.current.push(layer);
+
+          const date = new Date(frame.time * 1000);
+          const ctTime = date.toLocaleTimeString("en-US", {
+            timeZone: "America/Chicago", hour: "numeric", minute: "2-digit",
+          });
+          setTimestamp(`${ctTime} CT`);
+
+          // Advance to next frame, loop back to start
+          animPosRef.current = (animPosRef.current + 1) % frames.length;
+          // 2000ms per frame — smooth enough, dramatically fewer requests
+          animTimerRef.current = setTimeout(tick, 2000);
         };
-        playAnimation();
+
+        tick();
       } catch {}
     };
+
     start();
     return () => {
       cancelled = true;
+      if (activeFadeIn) clearInterval(activeFadeIn);
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
-      if (mapInstanceRef.current) { radarLayersRef.current.forEach((layer) => mapInstanceRef.current.removeLayer(layer)); radarLayersRef.current = []; }
+      if (mapInstanceRef.current) {
+        radarLayersRef.current.forEach((layer) => {
+          try { mapInstanceRef.current.removeLayer(layer); } catch {}
+        });
+        radarLayersRef.current = [];
+      }
     };
   }, [mapReady]);
 
