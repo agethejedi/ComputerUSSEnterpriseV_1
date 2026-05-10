@@ -133,6 +133,46 @@ const TOOLS = [
     description: "Trigger the full scripted morning briefing sequence. Use only if the user explicitly asks for 'the morning briefing' or 'my briefing'.",
     input_schema: { type: "object", properties: {} },
   },
+  // ── Holographic Interface ─────────────────────────────────────────────────
+  {
+    name: "activate_holographic",
+    description: "Open the full-screen holographic interface — starts the webcam and Three.js scene. Call this before any load or manipulate commands if the panel is not already open.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "deactivate_holographic",
+    description: "Close the holographic interface and stop the webcam.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "load_holographic_model",
+    description: "Load a 3D model into the holographic workspace. Use NASA model names (ISS, Hubble, Webb, SLS, Mars, Earth, Moon, Saturn, Perseverance, etc.) or 'wireframe' for the default sci-fi object.",
+    input_schema: {
+      type: "object",
+      properties: {
+        model: {
+          type: "string",
+          description: "Name of the model to load. Examples: 'ISS', 'James Webb', 'Mars', 'wireframe', 'Perseverance rover'.",
+        },
+      },
+      required: ["model"],
+    },
+  },
+  {
+    name: "manipulate_holographic",
+    description: "Apply a voice command to rotate, zoom, or reset the current holographic model.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["rotate_left", "rotate_right", "rotate_up", "rotate_down", "zoom_in", "zoom_out", "reset"],
+          description: "What to do to the current model.",
+        },
+      },
+      required: ["action"],
+    },
+  },
 ];
 
 const SYSTEM_PROMPT = `You are JARVIS, a personal AI assistant inspired by the Tony Stark interface — composed, dry, efficient, lightly British in cadence. You address the user as "Ron" or "sir" sparingly.
@@ -155,6 +195,20 @@ Rules for watchlist management:
 ## COMPARATIVE ANALYSIS
 
 When asked to compare watchlists or individual stocks ("how is financials doing versus tech?"), call compare_watchlists. Narrate the result conversationally: lead with the stronger performer, cite the top gainer and worst drag in each list, and keep it to two sentences. Don't read every ticker — summarize the story.
+
+## HOLOGRAPHIC INTERFACE
+
+The dashboard has a holographic workspace that composites a Three.js 3D scene over the user's live webcam feed. Ron sees himself on screen with models floating in front of him. Hand gestures (pinch to grab, move to rotate, two hands to scale) drive manipulation. Voice commands also work.
+
+Use these tools:
+- activate_holographic: open full-screen holographic panel and start webcam
+- deactivate_holographic: close it
+- load_holographic_model(model): load a named NASA model or default wireframe
+- manipulate_holographic(action): rotate_left, rotate_right, rotate_up, rotate_down, zoom_in, zoom_out, reset
+
+NASA models available: ISS, Hubble, Webb, Voyager, Juno, Cassini, SLS, Orion, Curiosity, Perseverance, Ingenuity, Earth, Mars, Moon, Jupiter, Saturn, Venus, Mercury, Sun, Pluto, Europa, Titan, Io.
+
+When Ron says "show me the ISS": call activate_holographic then load_holographic_model with "ISS". Narrate the load naturally. For manipulation commands like "rotate left" or "zoom in", call manipulate_holographic directly.
 
 ## PERIODIC TABLE OF THE DOW (COMING SOON)
 
