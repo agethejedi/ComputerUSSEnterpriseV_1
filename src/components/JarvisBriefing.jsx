@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import HolographicPanel, { buildHoloCommand } from "./HolographicPanel.jsx";
+import { findNasaModel } from "./nasaModels.js";
 
 // ============================================================
 // VISUALIZER
@@ -396,6 +398,19 @@ async function executeToolCall(name, input, ctx) {
     case "run_morning_briefing":
       return JSON.stringify({ status: "briefing not yet implemented" });
 
+    // ── Holographic interface ──────────────────────────────────────────────
+    case "activate_holographic":
+    case "deactivate_holographic":
+    case "load_holographic_model":
+    case "manipulate_holographic":
+    case "load_holographic_image": {
+      const cmd = buildHoloCommand(name, input, findNasaModel);
+      if (cmd && ctx.setHoloCommand) {
+        ctx.setHoloCommand({ ...cmd, _ts: Date.now() });
+      }
+      return JSON.stringify({ ok: true, action: name });
+    }
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
@@ -780,6 +795,7 @@ function ConversationPanel({ messages, highlighted }) {
 
 export default function JarvisBriefing() {
   const [mode, setMode] = useState("idle");
+  const [holoCommand, setHoloCommand] = useState(null);
   const [conversation, setConversation] = useState([]);
   const [highlightedPanel, setHighlightedPanel] = useState(null);
   const [now, setNow] = useState(new Date());
@@ -953,6 +969,7 @@ export default function JarvisBriefing() {
             watchlists: watchlistsRef.current,
             activeWatchlistName: activeWatchlistNameRef.current,
             setHighlightedPanel,
+            setHoloCommand,
             setActiveWatchlistName: (name) => { setActiveWatchlistName(name); lsSaveActive(name); },
             updateWatchlists,
             refreshActiveWatchlist,
@@ -1071,6 +1088,9 @@ export default function JarvisBriefing() {
         </div>
 
         <div className="col-span-12 lg:col-span-3 space-y-3">
+          <HolographicPanel
+            externalCommand={holoCommand}
+          />
           <WatchlistPanel
             highlighted={highlightedPanel === "watchlist"}
             watchlists={watchlists}
