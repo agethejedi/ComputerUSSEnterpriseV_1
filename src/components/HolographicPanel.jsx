@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { NASA_MODELS, DEFAULT_MODEL, findNasaModel } from "./nasaModels.js";
 
 // ============================================================
@@ -22,38 +24,8 @@ const GESTURE_LABELS = {
 };
 
 // ============================================================
-// CDN LOADERS (lazy, cached)
+// MEDIAPIPE CDN LOADER (still loaded dynamically — too large for npm)
 // ============================================================
-
-let threePromise = null;
-function loadThree() {
-  if (typeof window === "undefined") return Promise.resolve(null);
-  if (window.THREE) return Promise.resolve(window.THREE);
-  if (threePromise) return threePromise;
-  threePromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js";
-    s.onload = () => resolve(window.THREE);
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-  return threePromise;
-}
-
-let gltfLoaderPromise = null;
-function loadGLTFLoader() {
-  if (window.THREE?.GLTFLoader) return Promise.resolve(window.THREE.GLTFLoader);
-  if (gltfLoaderPromise) return gltfLoaderPromise;
-  gltfLoaderPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    // Use a CDN-hosted GLTFLoader compatible with r128
-    s.src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js";
-    s.onload = () => resolve(window.THREE.GLTFLoader);
-    s.onerror = reject;
-    document.head.appendChild(s);
-  });
-  return gltfLoaderPromise;
-}
 
 let mediapipePromise = null;
 function loadMediaPipe() {
@@ -84,7 +56,6 @@ function loadMediaPipe() {
 
 class HoloScene {
   constructor(canvas, width, height) {
-    const THREE = window.THREE;
     this.THREE = THREE;
     this.width = width;
     this.height = height;
@@ -144,9 +115,8 @@ class HoloScene {
   // Load a GLTF model by URL
   async loadGLTF(url, scale = 1) {
     const THREE = this.THREE;
-    await loadGLTFLoader();
     return new Promise((resolve, reject) => {
-      const loader = new THREE.GLTFLoader();
+      const loader = new GLTFLoader();
       loader.load(
         url,
         (gltf) => {
@@ -440,7 +410,7 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
   // ── Initialize Three.js scene ────────────────────────────────────────────
   const initThree = useCallback(async () => {
     if (!threeCanvasRef.current) return;
-    await loadThree();
+    // THREE is now a proper npm import — no async loading needed
     const rect = containerRef.current?.getBoundingClientRect() || { width: 800, height: 600 };
     const scene = new HoloScene(threeCanvasRef.current, rect.width, rect.height);
     sceneRef.current = scene;
