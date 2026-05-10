@@ -115,11 +115,14 @@ class HoloScene {
   // Load a GLTF model by URL
   async loadGLTF(url, scale = 1) {
     const THREE = this.THREE;
+    // Clear BEFORE starting load so wireframe disappears immediately
+    this.clearCurrentObject();
     return new Promise((resolve, reject) => {
       const loader = new GLTFLoader();
       loader.load(
         url,
         (gltf) => {
+          // Clear again in case anything accumulated during async load
           this.clearCurrentObject();
           const model = gltf.scene;
 
@@ -281,9 +284,25 @@ class HoloScene {
   clearCurrentObject() {
     if (this.currentObject) {
       this.pivot.remove(this.currentObject);
+      // Dispose all geometries and materials to free GPU memory
+      this.currentObject.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach((m) => {
+            if (m.map) m.map.dispose();
+            m.dispose();
+          });
+        }
+      });
       this.currentObject = null;
     }
+    // Also clear any other unexpected children from pivot
+    while (this.pivot.children.length > 0) {
+      this.pivot.remove(this.pivot.children[0]);
+    }
     this.pivot.rotation.set(0, 0, 0);
+    this.pivot.scale.setScalar(1);
     this.autoRotate = true;
   }
 
@@ -910,34 +929,20 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
             style={{ border: `1px solid ${ACCENT}44`, color: `${ACCENT}88`, background: currentModel?.id === "wireframe" ? `${ACCENT}20` : "transparent" }}>
             CORE
           </button>
-          {[
-            { label: "ISS", id: "iss" },
-            { label: "WEBB", id: "webb" },
-            { label: "SLS", id: "sls" },
-            { label: "PERSEVERANCE", id: "perseverance" },
-            { label: "EARTH", id: "earth" },
-            { label: "MARS", id: "mars" },
-            { label: "SATURN", id: "saturn" },
-            { label: "MOON", id: "moon" },
-            { label: "HUBBLE", id: "hubble" },
-            { label: "VOYAGER", id: "voyager" },
-          ].map(({ label, id }) => {
-            const model = NASA_MODELS.find((m) => m.id === id);
-            return (
-              <button
-                key={id}
-                onClick={() => model && loadNasaModel(model)}
-                className="px-2 py-0.5 text-[8px] tracking-[0.15em] flex-shrink-0 transition-all"
-                style={{
-                  border: `1px solid ${ACCENT}44`,
-                  color: currentModel?.id === id ? ACCENT : `${ACCENT}88`,
-                  background: currentModel?.id === id ? `${ACCENT}20` : "transparent",
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
+          {NASA_MODELS.map((model) => (
+            <button
+              key={model.id}
+              onClick={() => loadNasaModel(model)}
+              className="px-2 py-0.5 text-[8px] tracking-[0.15em] flex-shrink-0 transition-all"
+              style={{
+                border: `1px solid ${ACCENT}44`,
+                color: currentModel?.id === model.id ? ACCENT : `${ACCENT}88`,
+                background: currentModel?.id === model.id ? `${ACCENT}20` : "transparent",
+              }}
+            >
+              {model.name.split(" ").slice(-1)[0].toUpperCase()}
+            </button>
+          ))}
           {/* Photo upload */}
           <label className="px-2 py-0.5 text-[8px] tracking-[0.15em] flex-shrink-0 cursor-pointer transition-all"
             style={{ border: `1px solid ${ACCENT_PURPLE}44`, color: `${ACCENT_PURPLE}88` }}>
