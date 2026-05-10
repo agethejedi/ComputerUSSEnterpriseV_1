@@ -1,13 +1,18 @@
 // Cloudflare Pages Function: /api/nasa-model
 //
-// Proxies NASA 3D model GLB files to solve two problems:
-// 1. NASA's CDN blocks cross-origin requests (CORS)
-// 2. Some NASA URLs have changed — this function uses a verified URL map
+// Proxies NASA 3D model GLB files — solves CORS blocking from NASA's CDN.
 //
-// GET /api/nasa-model?id=iss  → streams the GLB back with CORS headers
-// GET /api/nasa-model?id=mars → streams Mars GLB back with CORS headers
+// CONFIRMED URLs (scraped directly from NASA science pages):
+//   Webb (B): https://assets.science.nasa.gov/content/dam/science/cds/3d/resources/model/james-webb-space-telescope-(b)/James%20Webb%20Space%20Telescope%20(B).glb
+//   Hubble:   https://assets.science.nasa.gov/content/dam/science/cds/3d/resources/model/hubble-space-telescope/Hubble.glb
 //
-// Models are cached at Cloudflare's edge for 24 hours (they never change).
+// Pattern for all others (derived from confirmed URLs):
+//   https://assets.science.nasa.gov/content/dam/science/cds/3d/resources/model/[page-slug]/[Model%20Name].glb
+//
+// Page slugs are from science.nasa.gov/3d-resources/[slug]/
+// Edge-cached 24h. Models never change.
+
+const BASE = "https://assets.science.nasa.gov/content/dam/science/cds/3d/resources/model";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -16,120 +21,183 @@ const CORS = {
   "Access-Control-Expose-Headers": "Content-Length, Content-Range",
 };
 
-// Verified working GLB URLs as of May 2026.
-// Primary: assets.science.nasa.gov (NASA's own CDN)
-// Fallback: Sketchfab embed downloads (publicly licensed, no login needed for GLB)
+// Each entry: urls[] tried in order, first 200 wins
 const MODEL_URLS = {
-  // ── Planets & Moons ───────────────────────────────────────────────────────
+  // ── CONFIRMED from page HTML ──────────────────────────────────────────────
+  webb: {
+    urls: [
+      `${BASE}/james-webb-space-telescope-(b)/James%20Webb%20Space%20Telescope%20(B).glb`,
+    ],
+  },
+  hubble: {
+    urls: [
+      `${BASE}/hubble-space-telescope/Hubble.glb`,
+      `${BASE}/hubble-space-telescope-3d-model/Hubble.glb`,
+    ],
+  },
+
+  // ── Pattern-derived from confirmed structure ───────────────────────────────
+  // Planets & Moons (slug = body name, file = "Body Name.glb")
   earth: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Earth_1_12756.glb",
-    fallback: "https://nasa3d.arc.nasa.gov/shared_assets/models/geo-earth/earth.glb",
+    urls: [
+      `${BASE}/earth/Earth.glb`,
+      `${BASE}/earth-3d-model/Earth.glb`,
+    ],
   },
   mars: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Mars_1_6792.glb",
-    fallback: "https://nasa3d.arc.nasa.gov/shared_assets/models/geo-mars/mars.glb",
+    urls: [
+      `${BASE}/mars/Mars.glb`,
+      `${BASE}/mars-3d-model/Mars.glb`,
+    ],
   },
   moon: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Moon_1_3474.glb",
-    fallback: "https://nasa3d.arc.nasa.gov/shared_assets/models/geo-moon/moon.glb",
+    urls: [
+      `${BASE}/moon/Moon.glb`,
+      `${BASE}/earths-moon/Moon.glb`,
+      `${BASE}/earths-moon-3d-model/Moon.glb`,
+    ],
   },
   jupiter: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Jupiter_1_142984.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/jupiter/Jupiter.glb`,
+      `${BASE}/jupiter-3d-model/Jupiter.glb`,
+    ],
   },
   saturn: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Saturn_1_120536.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/saturn/Saturn.glb`,
+      `${BASE}/saturn-3d-model/Saturn.glb`,
+    ],
   },
   venus: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Venus_1_12103.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/venus/Venus.glb`,
+      `${BASE}/venus-3d-model/Venus.glb`,
+    ],
   },
   mercury: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Mercury_1_4879.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/mercury/Mercury.glb`,
+      `${BASE}/mercury-3d-model/Mercury.glb`,
+    ],
   },
   sun: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Sun_1_1391000.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/sun/Sun.glb`,
+      `${BASE}/sun-3d-model/Sun.glb`,
+    ],
   },
   pluto: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Pluto_1_2376.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/pluto/Pluto.glb`,
+      `${BASE}/pluto-3d-model/Pluto.glb`,
+    ],
   },
   europa: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Europa_1_3122.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/europa/Europa.glb`,
+    ],
   },
   titan: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Titan_1_5150.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/titan/Titan.glb`,
+    ],
   },
   io: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Io_1_3643.glb",
-    fallback: null,
-  },
-  uranus: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Uranus_1_51118.glb",
-    fallback: null,
-  },
-  neptune: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/Neptune_1_49528.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/io/Io.glb`,
+    ],
   },
 
   // ── Spacecraft ────────────────────────────────────────────────────────────
   iss: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/spacecraft_ISS.glb",
-    fallback: "https://nasa3d.arc.nasa.gov/shared_assets/models/iss-4/ISS_4.glb",
-  },
-  hubble: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/spacecraft_HST.glb",
-    fallback: "https://nasa3d.arc.nasa.gov/shared_assets/models/hst/hst.glb",
-  },
-  webb: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/spacecraft_JWST.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/international-space-station/International%20Space%20Station.glb`,
+      `${BASE}/international-space-station-3d-model/ISS.glb`,
+      // GitHub raw as last resort — public, no CORS issues when proxied
+      "https://raw.githubusercontent.com/nasa/NASA-3D-Resources/master/3D%20Models/ISS/ISS_stationary.glb",
+    ],
   },
   voyager: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/spacecraft_Voyager.glb",
-    fallback: "https://nasa3d.arc.nasa.gov/shared_assets/models/voyager/voyager.glb",
+    urls: [
+      `${BASE}/voyager/Voyager.glb`,
+      `${BASE}/voyager-spacecraft/Voyager.glb`,
+    ],
   },
   cassini: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/spacecraft_Cassini.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/cassini/Cassini.glb`,
+      `${BASE}/cassini-spacecraft/Cassini.glb`,
+    ],
   },
   juno: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/spacecraft_Juno.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/juno/Juno.glb`,
+      `${BASE}/juno-spacecraft/Juno.glb`,
+    ],
   },
   "new-horizons": {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/spacecraft_NewHorizons.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/new-horizons/New%20Horizons.glb`,
+      `${BASE}/new-horizons-spacecraft/New%20Horizons.glb`,
+    ],
+  },
+  "osiris-rex": {
+    urls: [
+      `${BASE}/osiris-rex/OSIRIS-REx.glb`,
+      `${BASE}/osiris-rex-spacecraft/OSIRIS-REx.glb`,
+    ],
+  },
+  sls: {
+    urls: [
+      `${BASE}/space-launch-system-sls/Space%20Launch%20System%20(SLS).glb`,
+      `${BASE}/space-launch-system-sls/SLS.glb`,
+    ],
+  },
+  orion: {
+    urls: [
+      `${BASE}/orion-capsule/Orion%20Capsule.glb`,
+      `${BASE}/orion-capsule/Orion.glb`,
+    ],
+  },
+  gateway: {
+    urls: [
+      `${BASE}/gateway-lunar-space-station/Gateway%20Lunar%20Space%20Station.glb`,
+      `${BASE}/gateway-lunar-space-station/Gateway.glb`,
+    ],
+  },
+  shuttle: {
+    urls: [
+      `${BASE}/space-shuttle-d/Space%20Shuttle%20(D).glb`,
+      `${BASE}/space-shuttle-d/Space%20Shuttle.glb`,
+    ],
   },
 
   // ── Rovers ────────────────────────────────────────────────────────────────
-  curiosity: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/rover_Curiosity.glb",
-    fallback: "https://nasa3d.arc.nasa.gov/shared_assets/models/curiosity/curiosity.glb",
-  },
   perseverance: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/rover_Perseverance.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/mars-2020-perseverance-rover/Mars%202020%20Perseverance%20Rover.glb`,
+      `${BASE}/mars-2020-perseverance-rover/Perseverance.glb`,
+    ],
+  },
+  curiosity: {
+    urls: [
+      `${BASE}/curiosity-rover/Curiosity.glb`,
+      `${BASE}/mars-science-laboratory-curiosity-rover/Curiosity.glb`,
+      "https://raw.githubusercontent.com/nasa/NASA-3D-Resources/master/3D%20Models/Curiosity/Curiosity_static.glb",
+    ],
   },
   ingenuity: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/heli_Ingenuity.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/ingenuity-mars-helicopter/Ingenuity.glb`,
+      `${BASE}/ingenuity/Ingenuity.glb`,
+    ],
   },
   opportunity: {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/rover_Opportunity.glb",
-    fallback: "https://nasa3d.arc.nasa.gov/shared_assets/models/mer/mer.glb",
-  },
-
-  // ── Telescopes ────────────────────────────────────────────────────────────
-  "osiris-rex": {
-    primary: "https://assets.science.nasa.gov/dynamicimage/assets/science/psd/solar/2023/09/s/spacecraft_OSIRISREx.glb",
-    fallback: null,
+    urls: [
+      `${BASE}/mars-exploration-rover-spirit-and-opportunity/Mars%20Exploration%20Rover.glb`,
+      `${BASE}/mars-exploration-rover-spirit-and-opportunity/Opportunity.glb`,
+    ],
   },
 };
 
@@ -139,22 +207,21 @@ export async function onRequestGet(context) {
   const id = url.searchParams.get("id")?.toLowerCase();
 
   if (!id) {
-    return new Response(JSON.stringify({ error: "id parameter required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json", ...CORS },
+    return new Response(JSON.stringify({ error: "id required", available: Object.keys(MODEL_URLS) }), {
+      status: 400, headers: { "Content-Type": "application/json", ...CORS },
     });
   }
 
   const modelDef = MODEL_URLS[id];
   if (!modelDef) {
-    return new Response(JSON.stringify({ error: `Unknown model: ${id}`, available: Object.keys(MODEL_URLS) }), {
-      status: 404,
-      headers: { "Content-Type": "application/json", ...CORS },
-    });
+    return new Response(
+      JSON.stringify({ error: `Unknown model: ${id}`, available: Object.keys(MODEL_URLS) }),
+      { status: 404, headers: { "Content-Type": "application/json", ...CORS } }
+    );
   }
 
-  // Check edge cache first
-  const cacheKey = new Request(`https://jarvis-nasa-model-cache/${id}.glb`);
+  // Edge cache check
+  const cacheKey = new Request(`https://jarvis-nasa-model-cache-v3/${id}.glb`);
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) {
@@ -164,54 +231,45 @@ export async function onRequestGet(context) {
     return fresh;
   }
 
-  // Try primary URL, then fallback
-  const urlsToTry = [modelDef.primary, modelDef.fallback].filter(Boolean);
   let lastErr = null;
-
-  for (const sourceUrl of urlsToTry) {
+  for (const sourceUrl of modelDef.urls) {
     try {
       const upstream = await fetch(sourceUrl, {
         headers: {
-          "User-Agent": "JARVIS-Briefing/1.0 (Cloudflare Pages proxy)",
-          "Accept": "model/gltf-binary, */*",
+          "User-Agent": "JARVIS-Dashboard/1.0 (personal; cloudflare-pages)",
+          "Accept": "model/gltf-binary, application/octet-stream, */*",
+          "Referer": "https://science.nasa.gov/",
         },
       });
 
       if (!upstream.ok) {
-        lastErr = `${sourceUrl} returned ${upstream.status}`;
+        lastErr = `${sourceUrl} → HTTP ${upstream.status}`;
         continue;
       }
 
-      const contentType = upstream.headers.get("content-type") || "model/gltf-binary";
-      const contentLength = upstream.headers.get("content-length");
-
+      const ct = upstream.headers.get("content-type") || "model/gltf-binary";
+      const cl = upstream.headers.get("content-length");
       const responseHeaders = {
-        "Content-Type": contentType,
-        "Cache-Control": "public, max-age=86400", // 24 hours
+        "Content-Type": ct,
+        "Cache-Control": "public, max-age=86400",
         "x-cache": "MISS",
-        "x-source": sourceUrl,
+        "x-source-url": sourceUrl,
         ...CORS,
       };
-      if (contentLength) responseHeaders["Content-Length"] = contentLength;
+      if (cl) responseHeaders["Content-Length"] = cl;
 
-      const response = new Response(upstream.body, {
-        status: 200,
-        headers: responseHeaders,
-      });
-
-      // Cache it at the edge
+      const response = new Response(upstream.body, { status: 200, headers: responseHeaders });
       context.waitUntil(cache.put(cacheKey, response.clone()));
       return response;
 
     } catch (err) {
-      lastErr = String(err);
+      lastErr = `${sourceUrl} → ${String(err)}`;
       continue;
     }
   }
 
-  // All URLs failed
   return new Response(
-    JSON.stringify({ error: "All model sources failed", detail: lastErr, id }),
+    JSON.stringify({ error: "All sources failed", id, detail: lastErr }),
     { status: 502, headers: { "Content-Type": "application/json", ...CORS } }
   );
 }
