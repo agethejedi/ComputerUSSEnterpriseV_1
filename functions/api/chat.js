@@ -2,269 +2,188 @@
 // Proxies requests to the Anthropic API. API key lives in Cloudflare env vars.
 
 const TOOLS = [
+  // ── Weather ───────────────────────────────────────────────────────────────
   {
     name: "get_weather",
     description: "Get LIVE weather data from NOAA / National Weather Service. For 'local' scope, returns current observed conditions for The Colony, TX, plus four forecast periods (6 AM, noon, 6 PM, midnight) and any active alerts. For 'national' scope, returns current temperatures for major US cities. Always call this when the user asks about weather, conditions, temperature, forecast, rain, storms, or alerts — never make up weather values.",
     input_schema: {
       type: "object",
       properties: {
-        scope: {
-          type: "string",
-          enum: ["local", "national"],
-          description: "'local' for The Colony TX detail, 'national' for major-city overview.",
-        },
+        scope: { type: "string", enum: ["local", "national"], description: "'local' for The Colony TX detail, 'national' for major-city overview." },
       },
     },
   },
+
+  // ── Market ────────────────────────────────────────────────────────────────
   {
     name: "get_market_data",
-    description: "Get current price and change data for stocks on the user's watchlist or commodity ETFs. Use this for any question about market prices or movement.",
+    description: "Get current price and change data for stocks on the user's active watchlist or commodity ETFs. Use for any question about market prices or movement.",
     input_schema: {
       type: "object",
       properties: {
-        symbols: {
-          type: "array",
-          items: { type: "string" },
-          description: "List of symbols or names. Use ['all'] to fetch entire active watchlist plus commodities.",
-        },
-        listName: {
-          type: "string",
-          description: "Optional: fetch a specific named watchlist instead of the active one.",
-        },
+        symbols: { type: "array", items: { type: "string" }, description: "List of symbols or names. Use ['all'] to fetch everything." },
+        watchlistName: { type: "string", description: "Optional — which watchlist to draw from. Defaults to active watchlist." },
       },
       required: ["symbols"],
     },
   },
+
+  // ── Watchlists ────────────────────────────────────────────────────────────
   {
     name: "list_watchlists",
-    description: "Returns all saved watchlists and their symbols. Use when the user asks what lists exist, or before adding/removing to confirm current state.",
+    description: "Returns all named watchlists and which one is currently active.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "create_watchlist",
-    description: "Create a new named watchlist with up to 5 validated symbols. For thematic requests ('create a financials list'), propose the symbols to the user before calling this — don't add them silently. Max 5 symbols per list.",
+    description: "Create a new named watchlist. For thematic lists, propose tickers and ask Ron to confirm first.",
     input_schema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Short name for the list, e.g. 'TECH', 'FINANCIALS'." },
-        symbols: {
-          type: "array",
-          items: { type: "string" },
-          description: "Up to 5 ticker symbols, e.g. ['AAPL','MSFT','GOOGL'].",
-        },
+        name: { type: "string" },
+        symbols: { type: "array", items: { type: "string" } },
       },
       required: ["name", "symbols"],
     },
   },
   {
     name: "delete_watchlist",
-    description: "Delete a named watchlist. Cannot delete DEFAULT. Confirm with the user before deleting.",
+    description: "Delete a named watchlist. Cannot delete DEFAULT. Always confirm first.",
     input_schema: {
       type: "object",
-      properties: {
-        name: { type: "string", description: "Name of the list to delete." },
-      },
+      properties: { name: { type: "string" } },
       required: ["name"],
     },
   },
   {
     name: "add_to_watchlist",
-    description: "Add one or more symbols to an existing watchlist. Validates each symbol against Twelve Data first. Respects the 5-symbol cap.",
+    description: "Add ticker symbols to an existing watchlist. Max 5 symbols per list.",
     input_schema: {
       type: "object",
       properties: {
-        listName: { type: "string", description: "Name of the watchlist to add to." },
-        symbols: { type: "array", items: { type: "string" }, description: "Symbols to add." },
+        listName: { type: "string" },
+        symbols: { type: "array", items: { type: "string" } },
       },
-      required: ["listName", "symbols"],
+      required: ["symbols"],
     },
   },
   {
     name: "remove_from_watchlist",
-    description: "Remove one or more symbols from an existing watchlist.",
+    description: "Remove ticker symbols from an existing watchlist.",
     input_schema: {
       type: "object",
       properties: {
-        listName: { type: "string", description: "Name of the watchlist to remove from." },
-        symbols: { type: "array", items: { type: "string" }, description: "Symbols to remove." },
+        listName: { type: "string" },
+        symbols: { type: "array", items: { type: "string" } },
       },
-      required: ["listName", "symbols"],
+      required: ["symbols"],
     },
   },
   {
     name: "set_active_watchlist",
-    description: "Switch the dashboard's active watchlist to a named list.",
+    description: "Switch the dashboard to display a different named watchlist.",
     input_schema: {
       type: "object",
-      properties: {
-        name: { type: "string", description: "Name of the watchlist to make active." },
-      },
+      properties: { name: { type: "string" } },
       required: ["name"],
     },
   },
   {
     name: "compare_watchlists",
-    description: "Fetch live data for two named watchlists and return a side-by-side performance summary. Use when the user asks how one list is doing versus another, or compares individual stocks across lists.",
+    description: "Fetch live price data for two named watchlists and return a side-by-side performance comparison.",
     input_schema: {
       type: "object",
       properties: {
-        nameA: { type: "string", description: "First watchlist name." },
-        nameB: { type: "string", description: "Second watchlist name." },
+        nameA: { type: "string" },
+        nameB: { type: "string" },
       },
       required: ["nameA", "nameB"],
     },
   },
+
+  // ── UI ────────────────────────────────────────────────────────────────────
   {
     name: "highlight_panel",
     description: "Visually highlight a specific dashboard panel to draw the user's attention to it.",
     input_schema: {
       type: "object",
       properties: {
-        panel: {
-          type: "string",
-          enum: ["local_weather", "national_weather", "watchlist", "commodities", "cnn", "bloomberg", "transcript"],
-        },
+        panel: { type: "string", enum: ["local_weather", "national_weather", "watchlist", "commodities", "cnn", "bloomberg", "transcript"] },
       },
       required: ["panel"],
     },
   },
   {
     name: "run_morning_briefing",
-    description: "Trigger the full scripted morning briefing sequence. Use only if the user explicitly asks for 'the morning briefing' or 'my briefing'.",
+    description: "Trigger the full scripted morning briefing sequence. Use only if Ron explicitly asks for it.",
     input_schema: { type: "object", properties: {} },
   },
 
   // ── Calendar ──────────────────────────────────────────────────────────────
   {
     name: "open_calendar",
-    description: "Open the JARVIS calendar panel. Optionally specify a view (month, week, day). Call this when the user asks to see their calendar, schedule, or agenda.",
+    description: "Open the JARVIS calendar. Optionally specify the view: month (default), week, or day.",
     input_schema: {
       type: "object",
       properties: {
-        view: { type: "string", enum: ["month", "week", "day"], description: "Which view to open. Defaults to month." },
+        view: { type: "string", enum: ["month", "week", "day"] },
+        date: { type: "string", description: "Optional ISO date YYYY-MM-DD to navigate to." },
       },
     },
-  },
-  {
-    name: "close_calendar",
-    description: "Close the calendar panel.",
-    input_schema: { type: "object", properties: {} },
   },
   {
     name: "add_calendar_event",
-    description: "Add an event to the JARVIS calendar. Parse natural language dates like 'tomorrow', 'next Tuesday', 'May 15th'. Times like '2pm', '14:00', '9:30am'. Labels: work, personal, health, finance, travel, other.",
+    description: "Add an event to the JARVIS calendar. Parse natural language dates into ISO format. Always narrate what was added.",
     input_schema: {
       type: "object",
       properties: {
-        title:     { type: "string", description: "Event title." },
-        date:      { type: "string", description: "Date string — ISO (2026-05-15), relative (tomorrow, next Tuesday), or natural (May 15th)." },
-        startTime: { type: "string", description: "Start time — '2pm', '14:00', '9:30am'. Omit for all-day events." },
-        endTime:   { type: "string", description: "End time. Optional." },
-        label:     { type: "string", enum: ["work","personal","health","finance","travel","other"], description: "Color label category." },
-        notes:     { type: "string", description: "Optional notes." },
+        title: { type: "string" },
+        date: { type: "string", description: "ISO date YYYY-MM-DD." },
+        startTime: { type: "string", description: "HH:MM 24h format." },
+        endTime: { type: "string", description: "HH:MM 24h format." },
+        label: { type: "string", enum: ["work", "personal", "health", "finance", "travel", "other"] },
+        notes: { type: "string" },
       },
-      required: ["title"],
+      required: ["title", "date"],
     },
   },
   {
-    name: "list_calendar_events",
-    description: "List upcoming calendar events. Use this when the user asks what's on their schedule, what's coming up, or what they have today/this week.",
+    name: "update_calendar_event",
+    description: "Update an existing calendar event by ID.",
     input_schema: {
       type: "object",
       properties: {
-        range: { type: "string", enum: ["today","tomorrow","this_week","next_week","this_month"], description: "Time range to query." },
+        id: { type: "string" },
+        changes: { type: "object", description: "Fields to update: title, date, startTime, endTime, label, notes." },
       },
+      required: ["id", "changes"],
     },
   },
   {
     name: "delete_calendar_event",
-    description: "Delete a calendar event by title or description. Always confirm with the user before deleting.",
+    description: "Delete a calendar event by ID. Always confirm with Ron first.",
     input_schema: {
       type: "object",
-      properties: {
-        title: { type: "string", description: "Title or partial title of event to delete." },
-      },
-      required: ["title"],
-    },
-  },
-
-  // ── Holographic Interface ─────────────────────────────────────────────────
-  // ── Calendar ─────────────────────────────────────────────────────────────
-  {
-    name: "open_calendar",
-    description: "Open the JARVIS calendar panel. Call this when Ron asks to see his calendar, schedule, or agenda. Optionally specify a view.",
-    input_schema: {
-      type: "object",
-      properties: {
-        view: { type: "string", enum: ["month","week","day"], description: "Which view to open. Defaults to month." },
-      },
-    },
-  },
-  {
-    name: "close_calendar",
-    description: "Close the calendar panel.",
-    input_schema: { type: "object", properties: {} },
-  },
-  {
-    name: "add_calendar_event",
-    description: "Add an event to the JARVIS calendar. Parse natural language dates and times — '2pm Tuesday' → date + startTime. Always confirm the event details before adding.",
-    input_schema: {
-      type: "object",
-      properties: {
-        title: { type: "string", description: "Event title." },
-        date: { type: "string", description: "Date in YYYY-MM-DD format." },
-        startTime: { type: "string", description: "Start time in HH:MM 24h format. e.g. '14:00'" },
-        endTime: { type: "string", description: "End time in HH:MM 24h format." },
-        label: { type: "string", enum: ["work","personal","health","finance","travel","other"], description: "Color label category." },
-        notes: { type: "string", description: "Optional notes." },
-        allDay: { type: "boolean", description: "True if this is an all-day event." },
-      },
-      required: ["title","date"],
-    },
-  },
-  {
-    name: "list_calendar_events",
-    description: "List calendar events. Use this when Ron asks what's on his schedule, what's coming up, or what he has this week/month/day.",
-    input_schema: {
-      type: "object",
-      properties: {
-        dateRange: {
-          type: "object",
-          properties: {
-            start: { type: "string", description: "Start date YYYY-MM-DD" },
-            end: { type: "string", description: "End date YYYY-MM-DD" },
-          },
-          description: "Optional date range filter. Omit for all events.",
-        },
-      },
-    },
-  },
-  {
-    name: "delete_calendar_event",
-    description: "Delete a calendar event by ID. First call list_calendar_events to find the ID, then confirm with Ron before deleting.",
-    input_schema: {
-      type: "object",
-      properties: {
-        id: { type: "string", description: "Event ID from list_calendar_events." },
-      },
+      properties: { id: { type: "string" } },
       required: ["id"],
     },
   },
   {
-    name: "navigate_calendar",
-    description: "Navigate the calendar to a specific date.",
+    name: "list_calendar_events",
+    description: "Read events from the calendar for a date range. Use when Ron asks about his schedule or upcoming events.",
     input_schema: {
       type: "object",
       properties: {
-        date: { type: "string", description: "Date to navigate to in YYYY-MM-DD format." },
+        startDate: { type: "string", description: "ISO date YYYY-MM-DD. Defaults to today." },
+        endDate: { type: "string", description: "ISO date YYYY-MM-DD. Defaults to 7 days from start." },
       },
-      required: ["date"],
     },
   },
 
+  // ── Holographic Interface ─────────────────────────────────────────────────
   {
     name: "activate_holographic",
-    description: "Open the full-screen holographic interface — starts the webcam and Three.js scene. Call this before any load or manipulate commands if the panel is not already open.",
+    description: "Open the full-screen holographic interface — starts the webcam and Three.js scene.",
     input_schema: { type: "object", properties: {} },
   },
   {
@@ -274,14 +193,11 @@ const TOOLS = [
   },
   {
     name: "load_holographic_model",
-    description: "Load a 3D model into the holographic workspace. Use NASA model names (ISS, Hubble, Webb, SLS, Mars, Earth, Moon, Saturn, Perseverance, etc.) or 'wireframe' for the default sci-fi object.",
+    description: "Load a 3D model into the holographic workspace. Use NASA model names or 'wireframe' for the default.",
     input_schema: {
       type: "object",
       properties: {
-        model: {
-          type: "string",
-          description: "Name of the model to load. Examples: 'ISS', 'James Webb', 'Mars', 'wireframe', 'Perseverance rover'.",
-        },
+        model: { type: "string", description: "Model name: ISS, Hubble, Webb, Mars, Earth, Moon, Perseverance, wireframe, etc." },
       },
       required: ["model"],
     },
@@ -292,16 +208,13 @@ const TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        action: {
-          type: "string",
-          enum: ["rotate_left", "rotate_right", "rotate_up", "rotate_down", "zoom_in", "zoom_out", "reset"],
-          description: "What to do to the current model.",
-        },
+        action: { type: "string", enum: ["rotate_left", "rotate_right", "rotate_up", "rotate_down", "zoom_in", "zoom_out", "reset"] },
       },
       required: ["action"],
     },
   },
 ];
+
 
 const SYSTEM_PROMPT = `You are JARVIS, a personal AI assistant inspired by the Tony Stark interface — composed, dry, efficient, lightly British in cadence. You address the user as "Ron" or "sir" sparingly.
 
@@ -361,6 +274,29 @@ When Ron says things like:
 Date handling: today is always available via JavaScript's Date. Convert natural language like "next Tuesday at 3pm" to YYYY-MM-DD and HH:MM format before calling the tool. When adding events, always read back the parsed details before saving — "I'll add a work event for Tuesday May 14th at 2pm, shall I go ahead?"
 
 Label selection: infer the label from context — meetings/calls → work, doctor → health, flights/hotels → travel, bills/investments → finance, birthdays/dinners → personal.
+
+## CALENDAR
+
+Ron has a personal JARVIS calendar. You can open it, add events, update them, delete them, and read his schedule.
+
+When adding events, parse natural language naturally:
+- "Tuesday at 2pm" → find the next Tuesday, set startTime "14:00"
+- "tomorrow morning" → tomorrow's date, startTime "09:00"
+- "next Friday 3-4pm" → correct date, startTime "15:00", endTime "16:00"
+
+Label mapping — infer from context:
+- Meetings, calls, work tasks → "work"
+- Doctor, gym, wellness → "health"  
+- Bills, investments → "finance"
+- Flights, trips → "travel"
+- Family, social → "personal"
+- Everything else → "other"
+
+Always open the calendar when adding or showing events — call open_calendar alongside add_calendar_event. Narrate confirmations naturally: "Done — quarterly review added for Tuesday the 15th at 2pm, labeled work."
+
+For "what's on my schedule" questions, call list_calendar_events and read the results conversationally. If nothing is scheduled, say so.
+
+Today's date for reference: always use the current date context when parsing relative dates like "tomorrow" or "next week."
 
 ## HOLOGRAPHIC INTERFACE
 
