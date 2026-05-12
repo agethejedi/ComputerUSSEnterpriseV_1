@@ -180,6 +180,19 @@ const TOOLS = [
     },
   },
 
+  // ── Flight Tracker ───────────────────────────────────────────────────────────
+  {
+    name: "get_flight_info",
+    description: "Get live flight information from the DFW airspace tracker. Returns aircraft count, altitude distribution, and details on specific flights. Call this when Ron asks about flights, air traffic, or specific aircraft over Dallas.",
+    input_schema: {
+      type: "object",
+      properties: {
+        callsign: { type: "string", description: "Optional — filter by specific callsign e.g. 'AAL123'" },
+        query: { type: "string", description: "Natural language query e.g. 'how many planes', 'highest aircraft', 'American Airlines flights'" },
+      },
+    },
+  },
+
   // ── Holographic Interface ─────────────────────────────────────────────────
   {
     name: "activate_holographic",
@@ -297,6 +310,20 @@ Always open the calendar when adding or showing events — call open_calendar al
 For "what's on my schedule" questions, call list_calendar_events and read the results conversationally. If nothing is scheduled, say so.
 
 Today's date for reference: always use the current date context when parsing relative dates like "tomorrow" or "next week."
+
+## FLIGHT TRACKER
+
+The dashboard has a live DFW airspace panel showing all aircraft over North Texas in real time via OpenSky Network ADS-B data. It updates every 15 seconds.
+
+When Ron asks about air traffic, call get_flight_info and highlight_panel("flight_tracker"). You can tell him:
+- How many aircraft are currently in DFW airspace
+- Which is the highest/fastest
+- Details on specific callsigns
+- General traffic conditions
+
+Note: OpenSky provides ADS-B position data but not commercial schedule data (no gate info, delays, or passenger counts). Callsigns are ICAO format (AAL = American, DAL = Delta, UAL = United, SWA = Southwest).
+
+If OPENSKY_CLIENT_ID is not configured, the panel still works anonymously with lower rate limits.
 
 ## HOLOGRAPHIC INTERFACE
 
