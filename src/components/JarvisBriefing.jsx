@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import HolographicPanel, { buildHoloCommand } from "./HolographicPanel.jsx";
-import { findNasaModel } from "./nasaModels.js";
+import CalendarPanel, { parseEventDate, parseEventTime } from "./CalendarPanel.jsx";
 
 // ============================================================
 // VISUALIZER
@@ -397,6 +397,36 @@ async function executeToolCall(name, input, ctx) {
 
     case "run_morning_briefing":
       return JSON.stringify({ status: "briefing not yet implemented" });
+
+    // ── Calendar ──────────────────────────────────────────────────────────
+    case "open_calendar":
+      ctx.setCalendarOpen(true);
+      if (input.view) {
+        ctx.setCalendarCommand({ action: "set_view", payload: input.view, _ts: Date.now() });
+      }
+      return JSON.stringify({ ok: true, opened: true });
+    case "close_calendar":
+      ctx.setCalendarOpen(false);
+      return JSON.stringify({ ok: true });
+    case "add_calendar_event":
+    case "delete_calendar_event":
+    case "navigate_calendar": {
+      const cmd = buildCalendarCommand(name, input);
+      if (cmd && ctx.setCalendarCommand) {
+        ctx.setCalendarCommand({ ...cmd, _ts: Date.now() });
+        if (!ctx.calendarOpen) ctx.setCalendarOpen(true);
+      }
+      return JSON.stringify({ ok: true, action: name });
+    }
+    case "list_calendar_events": {
+      const range = input.dateRange || null;
+      const evts = getEventsForTool(ctx.calendarEvents || [], range);
+      return JSON.stringify({
+        events: evts,
+        count: evts.length,
+        note: evts.length === 0 ? "No events found in that range." : `Found ${evts.length} event(s).`,
+      });
+    }
 
     // ── Holographic interface ──────────────────────────────────────────────
     case "activate_holographic":
@@ -827,6 +857,9 @@ function ConversationPanel({ messages, highlighted }) {
 export default function JarvisBriefing() {
   const [mode, setMode] = useState("idle");
   const [holoCommand, setHoloCommand] = useState(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [calendarCommand, setCalendarCommand] = useState(null);
+  const [calendarEvents, setCalendarEvents] = useState([]);
   const [conversation, setConversation] = useState([]);
   const [highlightedPanel, setHighlightedPanel] = useState(null);
   const [now, setNow] = useState(new Date());
@@ -1001,6 +1034,8 @@ export default function JarvisBriefing() {
             activeWatchlistName: activeWatchlistNameRef.current,
             setHighlightedPanel,
             setHoloCommand,
+            setCalendarOpen,
+            setCalendarCommand: (cmd) => setCalendarCommand(cmd),
             setActiveWatchlistName: (name) => { setActiveWatchlistName(name); lsSaveActive(name); },
             updateWatchlists,
             refreshActiveWatchlist,
@@ -1143,11 +1178,19 @@ export default function JarvisBriefing() {
         </div>
       </div>
 
+      {/* Calendar Panel */}
+      <CalendarPanel
+        isOpen={calendarOpen}
+        onClose={() => setCalendarOpen(false)}
+        externalCommand={calendarCommand}
+      />
+
       <div className="relative z-10 flex items-center justify-between px-6 py-2 border-t text-[9px] tracking-[0.25em] opacity-50" style={{ borderColor: "#7DD3FC22" }}>
         <span>HOLD SPACEBAR · OR TAP MIC TO SPEAK</span>
         <span>WATCHLIST · {activeWatchlistName} · {((watchlists || DEFAULT_WATCHLISTS)[activeWatchlistName] || []).length}/5 · {marketLoading ? "LOADING…" : marketError ? "ERROR" : "TWELVE DATA"}</span>
         <span>SONNET 4.6 · ENG-US</span>
       </div>
-    </div>
+
+          </div>
   );
 }
