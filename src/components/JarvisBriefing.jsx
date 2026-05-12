@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import HolographicPanel, { buildHoloCommand } from "./HolographicPanel.jsx";
 import CalendarPanel, { buildCalendarCommand } from "./CalendarPanel.jsx";
+import FlightPanel from "./FlightPanel.jsx";
+import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
 
 // ============================================================
 // VISUALIZER
