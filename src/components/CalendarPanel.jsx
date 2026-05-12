@@ -1,7 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+
+// ============================================================
+// CONSTANTS
+// ============================================================
 
 const ACCENT = "#7DD3FC";
-const ACCENT_DIM = "#7DD3FC33";
+const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const MONTHS = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE",
+                 "JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"];
+const HOURS = Array.from({ length: 24 }, (_, i) =>
+  `${String(i).padStart(2, "0")}:00`
+);
 
 const LABELS = {
   work:     { color: "#67E8F9", bg: "#67E8F915", label: "WORK" },
@@ -12,152 +21,413 @@ const LABELS = {
   other:    { color: "#94A3B8", bg: "#94A3B815", label: "OTHER" },
 };
 
-const DAYS = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
-const MONTHS = ["JANUARY","FEBRUARY","MARCH","APRIL","MAY","JUNE","JULY","AUGUST","SEPTEMBER","OCTOBER","NOVEMBER","DECEMBER"];
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
+// ============================================================
+// HELPERS
+// ============================================================
 
-function genId() { return `evt_${Date.now()}_${Math.random().toString(36).slice(2,7)}`; }
-function toISODate(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
-function parseISODate(s) { const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); }
-function formatTime(t) { if(!t) return ""; const [h,m]=t.split(":").map(Number); const ap=h>=12?"PM":"AM"; const hr=h%12||12; return `${hr}:${String(m).padStart(2,"0")} ${ap}`; }
-function isSameDay(a,b) { return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate(); }
-
-const LS_KEY = "jarvis_calendar_events";
-function lsLoad() { try { const r=localStorage.getItem(LS_KEY); return r?JSON.parse(r):[]; } catch { return []; } }
-function lsSave(e) { try { localStorage.setItem(LS_KEY,JSON.stringify(e)); } catch {} }
-async function kvLoad() { try { const r=await fetch("/api/calendar"); if(!r.ok) return null; return r.json(); } catch { return null; } }
-async function kvAdd(event) { try { await fetch("/api/calendar",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"add",event})}); } catch {} }
-async function kvDel(id) { try { await fetch(`/api/calendar?id=${id}`,{method:"DELETE"}); } catch {} }
-
-function Brackets() {
-  return <>
-    {["top-0 left-0 border-t border-l","top-0 right-0 border-t border-r","bottom-0 left-0 border-b border-l","bottom-0 right-0 border-b border-r"].map((cls,i)=>(
-      <div key={i} className={`absolute w-3 h-3 ${cls}`} style={{borderColor:ACCENT}}/>
-    ))}
-  </>;
+function today() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-function EventModal({initialDate,initialTime,event,onSave,onDelete,onClose}) {
-  const isEdit=!!event;
-  const [title,setTitle]=useState(event?.title||"");
-  const [date,setDate]=useState(event?.date||(initialDate?toISODate(initialDate):toISODate(new Date())));
-  const [startTime,setStartTime]=useState(event?.startTime||initialTime||"");
-  const [endTime,setEndTime]=useState(event?.endTime||"");
-  const [label,setLabel]=useState(event?.label||"work");
-  const [notes,setNotes]=useState(event?.notes||"");
-  const [allDay,setAllDay]=useState(event?.allDay!==false&&!event?.startTime);
+function formatDate(dateStr) {
+  if (!dateStr) return "";
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
 
-  const handleSave=()=>{
-    if(!title.trim()) return;
-    onSave({id:event?.id||genId(),title:title.trim(),date,startTime:allDay?null:(startTime||null),endTime:allDay?null:(endTime||null),label,notes,allDay,createdAt:event?.createdAt||Date.now()});
+function toDateStr(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function addDays(dateStr, n) {
+  const d = formatDate(dateStr);
+  d.setDate(d.getDate() + n);
+  return toDateStr(d);
+}
+
+function startOfWeek(dateStr) {
+  const d = formatDate(dateStr);
+  d.setDate(d.getDate() - d.getDay());
+  return toDateStr(d);
+}
+
+function getDaysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function getFirstDayOfMonth(year, month) {
+  return new Date(year, month, 1).getDay();
+}
+
+// LS fallback
+const LS_KEY = "jarvis_calendar_events";
+function lsSave(events) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(events)); } catch {}
+}
+function lsLoad() {
+  try {
+    const r = localStorage.getItem(LS_KEY);
+    return r ? JSON.parse(r) : [];
+  } catch { return []; }
+}
+
+// ============================================================
+// EVENT MODAL
+// ============================================================
+
+function EventModal({ initial, onSave, onDelete, onClose }) {
+  const [title, setTitle] = useState(initial?.title || "");
+  const [date, setDate] = useState(initial?.date || today());
+  const [startTime, setStartTime] = useState(initial?.startTime || "09:00");
+  const [endTime, setEndTime] = useState(initial?.endTime || "10:00");
+  const [label, setLabel] = useState(initial?.label || "work");
+  const [notes, setNotes] = useState(initial?.notes || "");
+  const isEdit = !!initial?.id;
+
+  const handleSave = () => {
+    if (!title.trim()) return;
+    onSave({ ...initial, title: title.trim(), date, startTime, endTime, label, notes });
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{background:"#00000088"}} onClick={onClose}>
-      <div className="relative w-full max-w-md p-6 mx-4" style={{background:"#060B14",border:`1px solid ${ACCENT}44`}} onClick={e=>e.stopPropagation()}>
-        <Brackets/>
-        <div className="text-[11px] tracking-[0.3em] mb-5" style={{color:ACCENT}}>{isEdit?"EDIT EVENT":"NEW EVENT"}</div>
-        <div className="mb-4">
-          <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{color:ACCENT}}>TITLE</label>
-          <input autoFocus value={title} onChange={e=>setTitle(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSave()}
-            className="w-full px-3 py-2 text-sm bg-transparent outline-none" placeholder="Event title…"
-            style={{border:`1px solid ${ACCENT}44`,color:"#E2E8F0",caretColor:ACCENT}}/>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center" style={{ background: "#020617cc" }}>
+      <div className="w-full max-w-md mx-4 relative" style={{ background: "#0B1626", border: `1px solid ${ACCENT}44` }}>
+        {/* Corner brackets */}
+        {["top-0 left-0 border-t border-l","top-0 right-0 border-t border-r",
+          "bottom-0 left-0 border-b border-l","bottom-0 right-0 border-b border-r"].map((cls, i) => (
+          <div key={i} className={`absolute w-3 h-3 ${cls}`} style={{ borderColor: ACCENT }} />
+        ))}
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: `${ACCENT}22` }}>
+          <span className="text-[10px] tracking-[0.25em]" style={{ color: ACCENT }}>
+            {isEdit ? "EDIT EVENT" : "NEW EVENT"}
+          </span>
+          <button onClick={onClose} className="text-[10px] tracking-[0.2em] opacity-50 hover:opacity-100" style={{ color: ACCENT }}>✕</button>
         </div>
-        <div className="mb-4">
-          <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{color:ACCENT}}>DATE</label>
-          <input type="date" value={date} onChange={e=>setDate(e.target.value)}
-            className="w-full px-3 py-2 text-sm bg-transparent outline-none"
-            style={{border:`1px solid ${ACCENT}44`,color:"#E2E8F0",colorScheme:"dark"}}/>
-        </div>
-        <div className="mb-4 flex items-center gap-3">
-          <button onClick={()=>setAllDay(!allDay)} className="w-8 h-4 rounded-full transition-all relative" style={{background:allDay?ACCENT:`${ACCENT}30`}}>
-            <span className="absolute top-0.5 w-3 h-3 rounded-full bg-slate-900 transition-all" style={{left:allDay?"18px":"2px"}}/>
-          </button>
-          <span className="text-[10px] tracking-[0.15em] opacity-70" style={{color:ACCENT}}>ALL DAY</span>
-        </div>
-        {!allDay&&(
-          <div className="mb-4 grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{color:ACCENT}}>START</label>
-              <input type="time" value={startTime} onChange={e=>setStartTime(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-transparent outline-none"
-                style={{border:`1px solid ${ACCENT}44`,color:"#E2E8F0",colorScheme:"dark"}}/>
+
+        <div className="p-4 space-y-3">
+          {/* Title */}
+          <div>
+            <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{ color: ACCENT }}>TITLE</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full bg-transparent text-sm px-3 py-2 outline-none"
+              style={{ border: `1px solid ${ACCENT}33`, color: "#E2E8F0", caretColor: ACCENT }}
+              placeholder="Event title..."
+              autoFocus
+            />
+          </div>
+
+          {/* Date + Times */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-1">
+              <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{ color: ACCENT }}>DATE</label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full bg-transparent text-[11px] px-2 py-2 outline-none"
+                style={{ border: `1px solid ${ACCENT}33`, color: "#E2E8F0", colorScheme: "dark" }}
+              />
             </div>
             <div>
-              <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{color:ACCENT}}>END</label>
-              <input type="time" value={endTime} onChange={e=>setEndTime(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-transparent outline-none"
-                style={{border:`1px solid ${ACCENT}44`,color:"#E2E8F0",colorScheme:"dark"}}/>
+              <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{ color: ACCENT }}>START</label>
+              <input
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="w-full bg-transparent text-[11px] px-2 py-2 outline-none"
+                style={{ border: `1px solid ${ACCENT}33`, color: "#E2E8F0", colorScheme: "dark" }}
+              />
+            </div>
+            <div>
+              <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{ color: ACCENT }}>END</label>
+              <input
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className="w-full bg-transparent text-[11px] px-2 py-2 outline-none"
+                style={{ border: `1px solid ${ACCENT}33`, color: "#E2E8F0", colorScheme: "dark" }}
+              />
             </div>
           </div>
-        )}
-        <div className="mb-4">
-          <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-2" style={{color:ACCENT}}>LABEL</label>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(LABELS).map(([key,{color,label:lbl}])=>(
-              <button key={key} onClick={()=>setLabel(key)} className="px-2 py-1 text-[8px] tracking-[0.15em] transition-all"
-                style={{border:`1px solid ${color}${label===key?"ff":"44"}`,color:label===key?color:`${color}88`,background:label===key?`${color}20`:"transparent"}}>
-                {lbl}
+
+          {/* Label */}
+          <div>
+            <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{ color: ACCENT }}>LABEL</label>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(LABELS).map(([key, val]) => (
+                <button
+                  key={key}
+                  onClick={() => setLabel(key)}
+                  className="px-3 py-1 text-[9px] tracking-[0.15em] transition-all"
+                  style={{
+                    border: `1px solid ${val.color}${label === key ? "ff" : "44"}`,
+                    background: label === key ? val.bg : "transparent",
+                    color: val.color,
+                    boxShadow: label === key ? `0 0 8px ${val.color}40` : "none",
+                  }}
+                >
+                  {val.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{ color: ACCENT }}>NOTES</label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className="w-full bg-transparent text-[11px] px-3 py-2 outline-none resize-none"
+              style={{ border: `1px solid ${ACCENT}33`, color: "#E2E8F0", caretColor: ACCENT }}
+              placeholder="Optional notes..."
+            />
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSave}
+              className="flex-1 py-2 text-[10px] tracking-[0.25em] transition-all"
+              style={{ border: `1px solid ${ACCENT}`, color: ACCENT, background: `${ACCENT}15`, boxShadow: `0 0 12px ${ACCENT}30` }}
+            >
+              {isEdit ? "SAVE CHANGES" : "ADD EVENT"}
+            </button>
+            {isEdit && (
+              <button
+                onClick={() => onDelete(initial.id)}
+                className="px-4 py-2 text-[10px] tracking-[0.2em] transition-all"
+                style={{ border: "1px solid #FB718566", color: "#FB7185", background: "#FB718515" }}
+              >
+                DELETE
               </button>
-            ))}
+            )}
           </div>
-        </div>
-        <div className="mb-5">
-          <label className="text-[9px] tracking-[0.2em] opacity-60 block mb-1" style={{color:ACCENT}}>NOTES</label>
-          <textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2}
-            className="w-full px-3 py-2 text-sm bg-transparent outline-none resize-none" placeholder="Optional notes…"
-            style={{border:`1px solid ${ACCENT}44`,color:"#E2E8F0"}}/>
-        </div>
-        <div className="flex gap-3 justify-between">
-          <div className="flex gap-2">
-            <button onClick={handleSave} className="px-4 py-2 text-[10px] tracking-[0.2em] uppercase transition-all"
-              style={{border:`1px solid ${ACCENT}`,color:ACCENT,background:`${ACCENT}15`}}>{isEdit?"UPDATE":"SAVE"}</button>
-            <button onClick={onClose} className="px-4 py-2 text-[10px] tracking-[0.2em] uppercase"
-              style={{border:"1px solid #64748B44",color:"#64748B"}}>CANCEL</button>
-          </div>
-          {isEdit&&<button onClick={()=>onDelete(event.id)} className="px-4 py-2 text-[10px] tracking-[0.2em] uppercase"
-            style={{border:"1px solid #FB718544",color:"#FB7185"}}>DELETE</button>}
         </div>
       </div>
     </div>
   );
 }
 
-function MonthView({year,month,events,today,selectedDate,onDayClick,onEventClick}) {
-  const firstDay=new Date(year,month,1).getDay();
-  const daysInMonth=new Date(year,month+1,0).getDate();
-  const daysInPrev=new Date(year,month,0).getDate();
-  const cells=[];
-  for(let i=firstDay-1;i>=0;i--) cells.push({day:daysInPrev-i,cur:false,date:new Date(year,month-1,daysInPrev-i)});
-  for(let d=1;d<=daysInMonth;d++) cells.push({day:d,cur:true,date:new Date(year,month,d)});
-  let nx=1; while(cells.length%7!==0) cells.push({day:nx++,cur:false,date:new Date(year,month+1,nx-1)});
+// ============================================================
+// MONTH VIEW
+// ============================================================
+
+function MonthView({ year, month, events, selectedDate, onSelectDate, onAddClick }) {
+  const daysInMonth = getDaysInMonth(year, month);
+  const firstDay = getFirstDayOfMonth(year, month);
+  const todayStr = today();
+
+  // Build grid — 6 rows x 7 cols
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const getEventsForDay = (day) => {
+    if (!day) return [];
+    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return events.filter((e) => e.date === dateStr);
+  };
+
+  return (
+    <div className="flex-1 overflow-auto p-3">
+      {/* Day headers */}
+      <div className="grid grid-cols-7 mb-1">
+        {DAYS.map((d) => (
+          <div key={d} className="text-center py-1 text-[9px] tracking-[0.2em] opacity-50" style={{ color: ACCENT }}>{d}</div>
+        ))}
+      </div>
+
+      {/* Grid */}
+      <div className="grid grid-cols-7 gap-px" style={{ background: `${ACCENT}11` }}>
+        {cells.map((day, i) => {
+          const dateStr = day ? `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}` : null;
+          const isToday = dateStr === todayStr;
+          const isSelected = dateStr === selectedDate;
+          const dayEvents = getEventsForDay(day);
+
+          return (
+            <div
+              key={i}
+              className="min-h-16 p-1 cursor-pointer transition-all"
+              style={{
+                background: isSelected ? `${ACCENT}15` : "#0B1626",
+                border: isToday ? `1px solid ${ACCENT}66` : "1px solid transparent",
+              }}
+              onClick={() => {
+                if (dateStr) {
+                  onSelectDate(dateStr);
+                  onAddClick(dateStr);
+                }
+              }}
+            >
+              {day && (
+                <>
+                  <div className="text-[11px] tabular-nums mb-1 text-right pr-1"
+                    style={{ color: isToday ? ACCENT : isSelected ? ACCENT : "#64748B",
+                             fontWeight: isToday ? "600" : "normal" }}>
+                    {day}
+                  </div>
+                  <div className="space-y-0.5">
+                    {dayEvents.slice(0, 3).map((evt) => (
+                      <div
+                        key={evt.id}
+                        className="text-[8px] tracking-[0.05em] px-1 truncate"
+                        style={{
+                          background: LABELS[evt.label]?.bg || LABELS.other.bg,
+                          color: LABELS[evt.label]?.color || LABELS.other.color,
+                          borderLeft: `2px solid ${LABELS[evt.label]?.color || LABELS.other.color}`,
+                        }}
+                        onClick={(e) => { e.stopPropagation(); onAddClick(dateStr, evt); }}
+                      >
+                        {evt.startTime} {evt.title}
+                      </div>
+                    ))}
+                    {dayEvents.length > 3 && (
+                      <div className="text-[8px] opacity-50 pl-1" style={{ color: ACCENT }}>
+                        +{dayEvents.length - 3} more
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// WEEK VIEW
+// ============================================================
+
+function WeekView({ weekStart, events, onAddClick }) {
+  const todayStr = today();
+  const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+  const getEventsForDay = (dateStr) => events.filter((e) => e.date === dateStr);
+
   return (
     <div className="flex-1 overflow-auto">
-      <div className="grid grid-cols-7 border-b" style={{borderColor:ACCENT_DIM}}>
-        {DAYS.map(d=><div key={d} className="py-2 text-center text-[9px] tracking-[0.2em] opacity-50" style={{color:ACCENT}}>{d}</div>)}
-      </div>
-      <div className="grid grid-cols-7" style={{gridAutoRows:"minmax(80px,1fr)"}}>
-        {cells.map((cell,i)=>{
-          const ds=toISODate(cell.date);
-          const dayEvts=events.filter(e=>e.date===ds);
-          const isToday=isSameDay(cell.date,today);
-          const isSel=selectedDate&&isSameDay(cell.date,selectedDate);
+      {/* Day headers */}
+      <div className="grid sticky top-0 z-10" style={{ gridTemplateColumns: "48px repeat(7, 1fr)", background: "#0B1626", borderBottom: `1px solid ${ACCENT}22` }}>
+        <div />
+        {days.map((dateStr) => {
+          const d = formatDate(dateStr);
+          const isToday = dateStr === todayStr;
           return (
-            <div key={i} onClick={()=>onDayClick(cell.date)} className="border-b border-r p-1 cursor-pointer transition-all"
-              style={{borderColor:ACCENT_DIM,background:isSel?`${ACCENT}10`:isToday?`${ACCENT}08`:"transparent",opacity:cell.cur?1:0.3}}>
-              <div className="flex items-center justify-center w-6 h-6 mb-1" style={{background:isToday?ACCENT:"transparent",borderRadius:"50%"}}>
-                <span className="text-[11px] font-light tabular-nums" style={{color:isToday?"#020617":ACCENT}}>{cell.day}</span>
+            <div key={dateStr} className="text-center py-2" style={{ borderLeft: `1px solid ${ACCENT}11` }}>
+              <div className="text-[9px] tracking-[0.15em] opacity-50" style={{ color: ACCENT }}>{DAYS[d.getDay()]}</div>
+              <div className="text-lg font-light tabular-nums" style={{ color: isToday ? ACCENT : "#64748B", textShadow: isToday ? `0 0 8px ${ACCENT}` : "none" }}>
+                {d.getDate()}
               </div>
-              <div className="space-y-0.5">
-                {dayEvts.slice(0,3).map(evt=>{
-                  const lbl=LABELS[evt.label]||LABELS.other;
-                  return <div key={evt.id} onClick={e=>{e.stopPropagation();onEventClick(evt);}}
-                    className="px-1 py-0.5 text-[8px] truncate cursor-pointer rounded-sm"
-                    style={{background:lbl.bg,color:lbl.color,border:`1px solid ${lbl.color}44`}}>
-                    {!evt.allDay&&evt.startTime?`${formatTime(evt.startTime)} `:""}{evt.title}
-                  </div>;
-                })}
-                {dayEvts.length>3&&<div className="text-[7px] opacity-50 px-1" style={{color:ACCENT}}>+{dayEvts.length-3} more</div>}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Time grid */}
+      <div className="grid" style={{ gridTemplateColumns: "48px repeat(7, 1fr)" }}>
+        {HOURS.map((hour) => (
+          <>
+            <div key={`h-${hour}`} className="text-[8px] tabular-nums text-right pr-2 pt-1 opacity-40 border-t" style={{ color: ACCENT, borderColor: `${ACCENT}11` }}>
+              {hour}
+            </div>
+            {days.map((dateStr) => {
+              const slotEvents = getEventsForDay(dateStr).filter((e) => e.startTime?.startsWith(hour.slice(0, 2)));
+              return (
+                <div
+                  key={`${dateStr}-${hour}`}
+                  className="h-12 border-t border-l cursor-pointer hover:bg-white/5 transition-all relative"
+                  style={{ borderColor: `${ACCENT}11` }}
+                  onClick={() => onAddClick(dateStr, null, hour)}
+                >
+                  {slotEvents.map((evt) => (
+                    <div
+                      key={evt.id}
+                      className="absolute inset-x-0.5 top-0.5 text-[8px] px-1 py-0.5 truncate z-10 cursor-pointer"
+                      style={{
+                        background: LABELS[evt.label]?.bg || LABELS.other.bg,
+                        color: LABELS[evt.label]?.color || LABELS.other.color,
+                        borderLeft: `2px solid ${LABELS[evt.label]?.color || LABELS.other.color}`,
+                      }}
+                      onClick={(e) => { e.stopPropagation(); onAddClick(dateStr, evt); }}
+                    >
+                      {evt.title}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// DAY VIEW
+// ============================================================
+
+function DayView({ dateStr, events, onAddClick }) {
+  const d = formatDate(dateStr);
+  const dayEvents = events.filter((e) => e.date === dateStr).sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
+  const todayStr = today();
+  const isToday = dateStr === todayStr;
+
+  return (
+    <div className="flex-1 overflow-auto p-3">
+      {/* Date header */}
+      <div className="mb-4 pb-2 border-b" style={{ borderColor: `${ACCENT}22` }}>
+        <div className="text-[10px] tracking-[0.2em] opacity-50" style={{ color: ACCENT }}>{DAYS[d.getDay()]}</div>
+        <div className="text-3xl font-light tabular-nums" style={{ color: isToday ? ACCENT : "#E2E8F0", textShadow: isToday ? `0 0 16px ${ACCENT}` : "none" }}>
+          {MONTHS[d.getMonth()]} {d.getDate()}, {d.getFullYear()}
+        </div>
+        {isToday && <div className="text-[9px] tracking-[0.2em] mt-1" style={{ color: ACCENT }}>TODAY</div>}
+      </div>
+
+      {/* Hour slots */}
+      <div className="space-y-px">
+        {HOURS.map((hour) => {
+          const slotEvents = dayEvents.filter((e) => e.startTime?.startsWith(hour.slice(0, 2)));
+          return (
+            <div
+              key={hour}
+              className="flex gap-3 group cursor-pointer"
+              onClick={() => onAddClick(dateStr, null, hour)}
+            >
+              <div className="text-[9px] tabular-nums w-10 text-right flex-shrink-0 pt-1 opacity-40 group-hover:opacity-70 transition-opacity" style={{ color: ACCENT }}>
+                {hour}
+              </div>
+              <div className="flex-1 min-h-10 border-t group-hover:bg-white/5 transition-all px-2 py-1 space-y-1" style={{ borderColor: `${ACCENT}11` }}>
+                {slotEvents.map((evt) => (
+                  <div
+                    key={evt.id}
+                    className="px-3 py-2 cursor-pointer"
+                    style={{
+                      background: LABELS[evt.label]?.bg || LABELS.other.bg,
+                      borderLeft: `3px solid ${LABELS[evt.label]?.color || LABELS.other.color}`,
+                    }}
+                    onClick={(e) => { e.stopPropagation(); onAddClick(dateStr, evt); }}
+                  >
+                    <div className="text-[11px] font-medium" style={{ color: LABELS[evt.label]?.color || LABELS.other.color }}>
+                      {evt.title}
+                    </div>
+                    <div className="text-[9px] opacity-60 mt-0.5" style={{ color: LABELS[evt.label]?.color || LABELS.other.color }}>
+                      {evt.startTime} – {evt.endTime}
+                      {evt.notes && ` · ${evt.notes}`}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           );
@@ -167,259 +437,317 @@ function MonthView({year,month,events,today,selectedDate,onDayClick,onEventClick
   );
 }
 
-function WeekView({weekStart,events,today,onSlotClick,onEventClick}) {
-  const days=Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(weekStart.getDate()+i);return d;});
-  return (
-    <div className="flex-1 overflow-auto">
-      <div className="grid sticky top-0 z-10" style={{gridTemplateColumns:"48px repeat(7,1fr)",background:"#060B14",borderBottom:`1px solid ${ACCENT_DIM}`}}>
-        <div/>
-        {days.map((d,i)=>{
-          const isToday=isSameDay(d,today);
-          return <div key={i} className="py-2 text-center border-l" style={{borderColor:ACCENT_DIM}}>
-            <div className="text-[9px] tracking-[0.15em] opacity-50" style={{color:ACCENT}}>{DAYS[d.getDay()]}</div>
-            <div className="flex items-center justify-center w-6 h-6 mx-auto mt-0.5" style={{background:isToday?ACCENT:"transparent",borderRadius:"50%"}}>
-              <span className="text-[11px]" style={{color:isToday?"#020617":ACCENT}}>{d.getDate()}</span>
-            </div>
-          </div>;
-        })}
-      </div>
-      {HOURS.map(hour=>(
-        <div key={hour} className="grid" style={{gridTemplateColumns:"48px repeat(7,1fr)",minHeight:"48px"}}>
-          <div className="text-[8px] tabular-nums opacity-40 pt-1 pr-2 text-right" style={{color:ACCENT}}>
-            {hour===0?"12AM":hour<12?`${hour}AM`:hour===12?"12PM":`${hour-12}PM`}
-          </div>
-          {days.map((d,di)=>{
-            const ds=toISODate(d);
-            const slotEvts=events.filter(e=>{
-              if(e.date!==ds) return false;
-              if(e.allDay) return hour===0;
-              return e.startTime?parseInt(e.startTime.split(":")[0])===hour:false;
-            });
-            return <div key={di} onClick={()=>onSlotClick(d,`${String(hour).padStart(2,"0")}:00`)}
-              className="border-l border-b cursor-pointer hover:bg-blue-950/20 relative" style={{borderColor:ACCENT_DIM}}>
-              {slotEvts.map(evt=>{
-                const lbl=LABELS[evt.label]||LABELS.other;
-                return <div key={evt.id} onClick={e=>{e.stopPropagation();onEventClick(evt);}}
-                  className="absolute inset-x-0.5 top-0.5 px-1 py-0.5 text-[8px] truncate cursor-pointer rounded-sm"
-                  style={{background:lbl.bg,color:lbl.color,border:`1px solid ${lbl.color}44`,zIndex:1}}>{evt.title}</div>;
-              })}
-            </div>;
-          })}
-        </div>
-      ))}
-    </div>
-  );
-}
+// ============================================================
+// MAIN CALENDAR PANEL
+// ============================================================
 
-function DayView({date,events,today,onSlotClick,onEventClick}) {
-  const ds=toISODate(date);
-  const dayEvts=events.filter(e=>e.date===ds);
-  const isToday=isSameDay(date,today);
-  return (
-    <div className="flex-1 overflow-auto">
-      <div className="px-4 py-3 border-b text-center" style={{borderColor:ACCENT_DIM}}>
-        <div className="text-[10px] tracking-[0.25em] opacity-60" style={{color:ACCENT}}>{DAYS[date.getDay()]}</div>
-        <div className="text-3xl font-light mt-1" style={{color:isToday?ACCENT:"#E2E8F0"}}>{date.getDate()}</div>
-        <div className="text-[10px] tracking-[0.2em] opacity-50 mt-0.5" style={{color:ACCENT}}>{MONTHS[date.getMonth()]} {date.getFullYear()}</div>
-      </div>
-      {dayEvts.filter(e=>e.allDay).length>0&&(
-        <div className="px-4 py-2 border-b" style={{borderColor:ACCENT_DIM}}>
-          <div className="text-[8px] tracking-[0.2em] opacity-40 mb-1" style={{color:ACCENT}}>ALL DAY</div>
-          {dayEvts.filter(e=>e.allDay).map(evt=>{
-            const lbl=LABELS[evt.label]||LABELS.other;
-            return <div key={evt.id} onClick={()=>onEventClick(evt)} className="px-2 py-1.5 mb-1 text-[11px] cursor-pointer rounded-sm"
-              style={{background:lbl.bg,color:lbl.color,border:`1px solid ${lbl.color}44`}}>{evt.title}</div>;
-          })}
-        </div>
-      )}
-      {HOURS.map(hour=>{
-        const slotEvts=dayEvts.filter(e=>!e.allDay&&e.startTime&&parseInt(e.startTime.split(":")[0])===hour);
-        const isCurHour=isToday&&new Date().getHours()===hour;
-        return <div key={hour} onClick={()=>onSlotClick(date,`${String(hour).padStart(2,"0")}:00`)}
-          className="flex border-b cursor-pointer hover:bg-blue-950/20 transition-all relative" style={{borderColor:ACCENT_DIM,minHeight:"56px"}}>
-          <div className="w-16 text-[8px] tabular-nums opacity-40 pt-1 px-2 text-right flex-shrink-0" style={{color:ACCENT}}>
-            {hour===0?"12 AM":hour<12?`${hour} AM`:hour===12?"12 PM":`${hour-12} PM`}
-          </div>
-          <div className="flex-1 px-2 py-1 relative">
-            {isCurHour&&<div className="absolute left-0 right-0 top-0 h-px" style={{background:"#FB7185"}}/>}
-            {slotEvts.map(evt=>{
-              const lbl=LABELS[evt.label]||LABELS.other;
-              return <div key={evt.id} onClick={e=>{e.stopPropagation();onEventClick(evt);}}
-                className="px-2 py-1.5 mb-0.5 text-[11px] cursor-pointer rounded-sm"
-                style={{background:lbl.bg,color:lbl.color,border:`1px solid ${lbl.color}44`}}>
-                <div className="font-medium">{evt.title}</div>
-                {evt.startTime&&<div className="text-[8px] opacity-70 mt-0.5">{formatTime(evt.startTime)}{evt.endTime?` → ${formatTime(evt.endTime)}`:""}</div>}
-                {evt.notes&&<div className="text-[8px] opacity-60 mt-0.5 truncate">{evt.notes}</div>}
-              </div>;
-            })}
-          </div>
-        </div>;
-      })}
-    </div>
-  );
-}
+export default function CalendarPanel({ isOpen, onClose, externalCommand }) {
+  const [view, setView] = useState("month"); // month | week | day
+  const [currentDate, setCurrentDate] = useState(today());
+  const [selectedDate, setSelectedDate] = useState(today());
+  const [events, setEventsState] = useState([]);
+  const [kvAvailable, setKvAvailable] = useState(true);
+  const [modal, setModal] = useState(null); // null | { date, event? }
+  const [loading, setLoading] = useState(false);
 
-export default function CalendarPanel({isOpen,onClose,externalCommand}) {
-  const today=new Date();
-  const [view,setView]=useState("month");
-  const [currentDate,setCurrentDate]=useState(new Date(today.getFullYear(),today.getMonth(),1));
-  const [selectedDate,setSelectedDate]=useState(today);
-  const [events,setEventsState]=useState([]);
-  const [kvAvailable,setKvAvailable]=useState(true);
-  const [modal,setModal]=useState(null);
-  const [loaded,setLoaded]=useState(false);
-  const eventsRef=useRef(events);
-  useEffect(()=>{eventsRef.current=events;},[events]);
+  const eventsRef = useRef(events);
+  useEffect(() => { eventsRef.current = events; }, [events]);
 
-  const setEvents=useCallback((evts)=>{setEventsState(evts);eventsRef.current=evts;lsSave(evts);},[]);
+  // ── Parse current date ───────────────────────────────────────────────────
+  const cd = formatDate(currentDate);
+  const year = cd.getFullYear();
+  const month = cd.getMonth();
 
-  useEffect(()=>{
-    const ls=lsLoad();
-    if(ls.length>0) setEventsState(ls);
-    kvLoad().then(data=>{
-      if(data){setKvAvailable(data.kvAvailable!==false);const m=data.events||ls;setEventsState(m);eventsRef.current=m;lsSave(m);}
-      setLoaded(true);
-    });
-  },[]);
+  // ── KV / localStorage sync ───────────────────────────────────────────────
+  const setEvents = useCallback((evts) => {
+    setEventsState(evts);
+    lsSave(evts);
+  }, []);
 
-  useEffect(()=>{
-    if(!externalCommand) return;
-    const{action,payload}=externalCommand;
-    if(action==="add_event"){
-      const updated=[...eventsRef.current,payload].sort((a,b)=>a.date.localeCompare(b.date));
-      setEvents(updated);kvAdd(payload);
-      const d=parseISODate(payload.date);
-      setCurrentDate(new Date(d.getFullYear(),d.getMonth(),1));setSelectedDate(d);
-    } else if(action==="delete_event"){
-      const updated=eventsRef.current.filter(e=>!e.title.toLowerCase().includes((payload.title||"").toLowerCase()));
-      setEvents(updated);
-    } else if(action==="set_view"){
-      setView(payload.view||"month");
-    } else if(action==="navigate"){
-      const d=new Date(currentDate);
-      const dir=payload.direction==="next"?1:-1;
-      if(view==="month") d.setMonth(d.getMonth()+dir);
-      else if(view==="week") d.setDate(d.getDate()+dir*7);
-      else d.setDate(d.getDate()+dir);
-      setCurrentDate(d);
+  const saveToKV = useCallback(async (action, payload) => {
+    try {
+      const res = await fetch("/api/calendar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...payload }),
+      });
+      const data = await res.json();
+      if (data.events) setEvents(data.events);
+      setKvAvailable(data.kvAvailable !== false);
+      return data;
+    } catch {
+      return null;
     }
-  },[externalCommand]);
+  }, [setEvents]);
 
-  const navigate=(dir)=>{
-    const d=new Date(currentDate);
-    if(view==="month") d.setMonth(d.getMonth()+dir);
-    else if(view==="week") d.setDate(d.getDate()+dir*7);
-    else d.setDate(d.getDate()+dir);
-    setCurrentDate(d);
+  // ── Load events on mount ─────────────────────────────────────────────────
+  useEffect(() => {
+    // Instant load from localStorage
+    const ls = lsLoad();
+    if (ls.length > 0) setEventsState(ls);
+
+    // Then sync from KV
+    fetch("/api/calendar")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.events) {
+          setEvents(data.events);
+          setKvAvailable(data.kvAvailable !== false);
+        }
+      })
+      .catch(() => setKvAvailable(false));
+  }, []);
+
+  // ── External commands from JARVIS ────────────────────────────────────────
+  useEffect(() => {
+    if (!externalCommand) return;
+    const { action, payload } = externalCommand;
+
+    switch (action) {
+      case "add_event": {
+        const evtData = payload;
+        saveToKV("add", evtData).then((data) => {
+          if (data?.event && evtData.date) {
+            setSelectedDate(evtData.date);
+            setCurrentDate(evtData.date);
+          }
+        });
+        break;
+      }
+      case "delete_event":
+        saveToKV("delete", { id: payload.id });
+        break;
+      case "update_event":
+        saveToKV("update", { id: payload.id, changes: payload.changes });
+        break;
+      case "set_view":
+        if (["month", "week", "day"].includes(payload)) setView(payload);
+        break;
+      case "go_to_date":
+        if (payload) { setCurrentDate(payload); setSelectedDate(payload); }
+        break;
+      default: break;
+    }
+  }, [externalCommand, saveToKV]);
+
+  // ── ESC to close ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape" && !modal) onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, modal]);
+
+  // ── Navigation ───────────────────────────────────────────────────────────
+  const navigate = (dir) => {
+    const d = formatDate(currentDate);
+    if (view === "month") {
+      d.setMonth(d.getMonth() + dir);
+      setCurrentDate(toDateStr(d));
+    } else if (view === "week") {
+      setCurrentDate(addDays(currentDate, dir * 7));
+    } else {
+      setCurrentDate(addDays(currentDate, dir));
+    }
   };
 
-  const handleSave=(event)=>{
-    const idx=eventsRef.current.findIndex(e=>e.id===event.id);
-    let updated;
-    if(idx>=0){updated=[...eventsRef.current];updated[idx]=event;}
-    else updated=[...eventsRef.current,event];
-    updated.sort((a,b)=>a.date.localeCompare(b.date)||(a.startTime||"").localeCompare(b.startTime||""));
-    setEvents(updated);kvAdd(event);setModal(null);
+  const goToday = () => {
+    setCurrentDate(today());
+    setSelectedDate(today());
   };
 
-  const handleDelete=(id)=>{
-    setEvents(eventsRef.current.filter(e=>e.id!==id));kvDel(id);setModal(null);
+  // ── Modal handlers ───────────────────────────────────────────────────────
+  const handleAddClick = useCallback((dateStr, existingEvent = null, prefillTime = null) => {
+    setModal({
+      date: dateStr,
+      event: existingEvent || (prefillTime ? { date: dateStr, startTime: prefillTime, endTime: prefillTime ? `${String(Number(prefillTime.slice(0, 2)) + 1).padStart(2, "0")}:00` : "10:00" } : null),
+    });
+  }, []);
+
+  const handleSave = useCallback(async (eventData) => {
+    setModal(null);
+    if (eventData.id) {
+      const { id, ...changes } = eventData;
+      await saveToKV("update", { id, changes });
+    } else {
+      await saveToKV("add", eventData);
+    }
+  }, [saveToKV]);
+
+  const handleDelete = useCallback(async (id) => {
+    setModal(null);
+    await saveToKV("delete", { id });
+  }, [saveToKV]);
+
+  // ── Header label ─────────────────────────────────────────────────────────
+  const headerLabel = () => {
+    if (view === "month") return `${MONTHS[month]} ${year}`;
+    if (view === "week") {
+      const ws = startOfWeek(currentDate);
+      const we = addDays(ws, 6);
+      return `${formatDate(ws).getDate()} – ${formatDate(we).getDate()} ${MONTHS[formatDate(we).getMonth()]} ${year}`;
+    }
+    const d = formatDate(currentDate);
+    return `${MONTHS[d.getMonth()]} ${d.getDate()}, ${year}`;
   };
 
-  useEffect(()=>{
-    const onKey=(e)=>{if(e.key==="Escape"&&!modal) onClose();};
-    window.addEventListener("keydown",onKey);
-    return()=>window.removeEventListener("keydown",onKey);
-  },[modal,onClose]);
-
-  if(!isOpen) return null;
-
-  const year=currentDate.getFullYear(),month=currentDate.getMonth();
-  const weekStart=new Date(currentDate);
-  weekStart.setDate(currentDate.getDate()-currentDate.getDay());
-  const headerLabel=view==="month"?`${MONTHS[month]} ${year}`:
-    view==="week"?`${MONTHS[weekStart.getMonth()]} ${weekStart.getDate()} – ${weekStart.getDate()+6}, ${weekStart.getFullYear()}`:
-    `${DAYS[selectedDate.getDay()]} ${MONTHS[selectedDate.getMonth()]} ${selectedDate.getDate()}, ${selectedDate.getFullYear()}`;
+  if (!isOpen) return null;
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex flex-col" style={{background:"#060B14"}}>
-        {/* Top bar */}
-        <div className="flex items-center justify-between px-6 py-3 flex-shrink-0"
-          style={{borderBottom:`1px solid ${ACCENT_DIM}`,background:"#060B14EE"}}>
+      {/* Full-screen calendar overlay */}
+      <div className="fixed inset-0 z-50 flex flex-col" style={{ background: "#020617" }}>
+
+        {/* ── TOP BAR ── */}
+        <div className="flex items-center justify-between px-6 py-3 flex-shrink-0" style={{ borderBottom: `1px solid ${ACCENT}22`, background: "#020617ee" }}>
           <div className="flex items-center gap-4">
-            <span className="text-[10px] tracking-[0.3em]" style={{color:ACCENT}}>● CALENDAR // JARVIS</span>
-            {!kvAvailable&&<span className="text-[8px] opacity-50" style={{color:"#FBBF24"}}>⚠ LOCAL ONLY</span>}
+            <span className="text-[10px] tracking-[0.3em]" style={{ color: ACCENT }}>● CALENDAR // JARVIS</span>
+            {!kvAvailable && (
+              <span className="text-[8px] tracking-[0.15em]" style={{ color: "#FBBF24" }}>⚠ LOCAL ONLY</span>
+            )}
           </div>
+
+          {/* View tabs */}
           <div className="flex items-center gap-1">
-            {["month","week","day"].map(v=>(
-              <button key={v} onClick={()=>{setView(v);if(v==="day") setCurrentDate(new Date(selectedDate));}}
-                className="px-3 py-1.5 text-[9px] tracking-[0.2em] uppercase transition-all"
-                style={{border:`1px solid ${view===v?ACCENT:ACCENT_DIM}`,color:view===v?ACCENT:`${ACCENT}60`,background:view===v?`${ACCENT}15`:"transparent"}}>
+            {["month", "week", "day"].map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
+                style={{
+                  border: `1px solid ${view === v ? ACCENT : `${ACCENT}33`}`,
+                  color: view === v ? ACCENT : `${ACCENT}60`,
+                  background: view === v ? `${ACCENT}15` : "transparent",
+                }}
+              >
                 {v}
               </button>
             ))}
           </div>
-          <button onClick={onClose} className="px-4 py-1.5 text-[10px] tracking-[0.25em] uppercase"
-            style={{border:"1px solid #FB718544",color:"#FB7185"}}>✕ CLOSE</button>
-        </div>
-        {/* Nav bar */}
-        <div className="flex items-center justify-between px-6 py-2 flex-shrink-0" style={{borderBottom:`1px solid ${ACCENT_DIM}`}}>
+
           <div className="flex items-center gap-3">
-            <button onClick={()=>navigate(-1)} className="w-7 h-7 flex items-center justify-center"
-              style={{border:`1px solid ${ACCENT_DIM}`,color:ACCENT}}>◀</button>
-            <button onClick={()=>navigate(1)} className="w-7 h-7 flex items-center justify-center"
-              style={{border:`1px solid ${ACCENT_DIM}`,color:ACCENT}}>▶</button>
-            <button onClick={()=>{setCurrentDate(new Date(today.getFullYear(),today.getMonth(),1));setSelectedDate(today);}}
-              className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase"
-              style={{border:`1px solid ${ACCENT_DIM}`,color:`${ACCENT}80`}}>TODAY</button>
+            {/* Nav controls */}
+            <div className="flex items-center gap-1">
+              <button onClick={() => navigate(-1)} className="w-7 h-7 flex items-center justify-center text-[11px] transition-all" style={{ border: `1px solid ${ACCENT}33`, color: `${ACCENT}88` }}>◀</button>
+              <button onClick={goToday} className="px-3 py-1 text-[9px] tracking-[0.15em] transition-all" style={{ border: `1px solid ${ACCENT}33`, color: `${ACCENT}88` }}>TODAY</button>
+              <button onClick={() => navigate(1)} className="w-7 h-7 flex items-center justify-center text-[11px] transition-all" style={{ border: `1px solid ${ACCENT}33`, color: `${ACCENT}88` }}>▶</button>
+            </div>
+
+            {/* Current period */}
+            <span className="text-[11px] tracking-[0.15em] font-light min-w-48 text-center" style={{ color: ACCENT }}>
+              {headerLabel()}
+            </span>
+
+            {/* Add event */}
+            <button
+              onClick={() => handleAddClick(selectedDate)}
+              className="px-4 py-1.5 text-[9px] tracking-[0.2em] transition-all"
+              style={{ border: `1px solid ${ACCENT}`, color: ACCENT, background: `${ACCENT}15`, boxShadow: `0 0 12px ${ACCENT}30` }}
+            >
+              + EVENT
+            </button>
+
+            <button
+              onClick={onClose}
+              className="px-4 py-1.5 text-[10px] tracking-[0.25em] transition-all"
+              style={{ border: "1px solid #FB7185", color: "#FB7185", background: "#FB718515" }}
+            >
+              ✕ CLOSE
+            </button>
           </div>
-          <span className="text-[12px] tracking-[0.2em] font-light" style={{color:ACCENT}}>{headerLabel}</span>
-          <button onClick={()=>setModal({mode:"add",date:selectedDate,time:null})}
-            className="px-4 py-1.5 text-[9px] tracking-[0.2em] uppercase"
-            style={{border:`1px solid ${ACCENT}`,color:ACCENT,background:`${ACCENT}15`}}>+ ADD EVENT</button>
         </div>
-        {/* Views */}
-        {view==="month"&&<MonthView year={year} month={month} events={events} today={today} selectedDate={selectedDate}
-          onDayClick={d=>{setSelectedDate(d);setModal({mode:"add",date:d,time:null});}} onEventClick={e=>setModal({mode:"edit",event:e})}/>}
-        {view==="week"&&<WeekView weekStart={weekStart} events={events} today={today}
-          onSlotClick={(d,t)=>{setSelectedDate(d);setModal({mode:"add",date:d,time:t});}} onEventClick={e=>setModal({mode:"edit",event:e})}/>}
-        {view==="day"&&<DayView date={selectedDate} events={events} today={today}
-          onSlotClick={(d,t)=>{setSelectedDate(d);setModal({mode:"add",date:d,time:t});}} onEventClick={e=>setModal({mode:"edit",event:e})}/>}
-        {/* Legend */}
-        <div className="flex items-center gap-4 px-6 py-2 flex-shrink-0" style={{borderTop:`1px solid ${ACCENT_DIM}`}}>
-          {Object.entries(LABELS).map(([k,{color,label}])=>(
-            <div key={k} className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full" style={{background:color}}/>
-              <span className="text-[8px] tracking-[0.1em] opacity-60" style={{color}}>{label}</span>
+
+        {/* ── LEGEND ── */}
+        <div className="flex items-center gap-3 px-6 py-2 flex-shrink-0" style={{ borderBottom: `1px solid ${ACCENT}11` }}>
+          {Object.entries(LABELS).map(([key, val]) => (
+            <div key={key} className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full" style={{ background: val.color, boxShadow: `0 0 4px ${val.color}` }} />
+              <span className="text-[8px] tracking-[0.15em]" style={{ color: `${val.color}99` }}>{val.label}</span>
             </div>
           ))}
-          <div className="ml-auto text-[8px] tracking-[0.15em] opacity-40" style={{color:ACCENT}}>ESC TO CLOSE · CLICK TO ADD</div>
+          <div className="ml-auto text-[8px] tracking-[0.15em] opacity-40" style={{ color: ACCENT }}>
+            {events.length} EVENT{events.length !== 1 ? "S" : ""}
+          </div>
+        </div>
+
+        {/* ── CALENDAR BODY ── */}
+        <div className="flex-1 overflow-hidden flex flex-col">
+          {view === "month" && (
+            <MonthView
+              year={year}
+              month={month}
+              events={events}
+              selectedDate={selectedDate}
+              onSelectDate={setSelectedDate}
+              onAddClick={handleAddClick}
+            />
+          )}
+          {view === "week" && (
+            <WeekView
+              weekStart={startOfWeek(currentDate)}
+              events={events}
+              onAddClick={handleAddClick}
+            />
+          )}
+          {view === "day" && (
+            <DayView
+              dateStr={currentDate}
+              events={events}
+              onAddClick={handleAddClick}
+            />
+          )}
+        </div>
+
+        {/* ── FOOTER ── */}
+        <div className="flex-shrink-0 px-6 py-2 flex items-center justify-between" style={{ borderTop: `1px solid ${ACCENT}11` }}>
+          <span className="text-[8px] tracking-[0.2em] opacity-40" style={{ color: ACCENT }}>
+            CLICK ANY DAY OR TIME SLOT TO ADD EVENT · ESC TO CLOSE
+          </span>
+          <span className="text-[8px] tracking-[0.2em] opacity-40" style={{ color: ACCENT }}>
+            JARVIS CALENDAR · KV SYNCED
+          </span>
         </div>
       </div>
-      {modal&&<EventModal initialDate={modal.date} initialTime={modal.time}
-        event={modal.mode==="edit"?modal.event:null}
-        onSave={handleSave} onDelete={handleDelete} onClose={()=>setModal(null)}/>}
+
+      {/* ── EVENT MODAL ── */}
+      {modal && (
+        <EventModal
+          initial={modal.event || { date: modal.date }}
+          onSave={handleSave}
+          onDelete={handleDelete}
+          onClose={() => setModal(null)}
+        />
+      )}
     </>
   );
 }
 
-export function buildCalendarCommand(toolName, input) {
-  switch(toolName) {
-    case "open_calendar": return {action:"set_view", payload:input.view||"month"};
-    case "add_calendar_event": return {action:"add_event", payload:{title:input.title, date:input.date, startTime:input.startTime, endTime:input.endTime, label:input.label||"work", notes:input.notes||"", allDay:input.allDay||false}};
-    case "delete_calendar_event": return {action:"delete_event", payload:{id:input.id}};
-    case "navigate_calendar": return {action:"go_to_date", payload:input.date};
-    default: return null;
-  }
-}
+// ============================================================
+// TOOL EXECUTOR HELPER
+// ============================================================
 
-export function getEventsForTool(events, dateRange) {
-  if(!dateRange) return events;
-  const {start, end} = dateRange;
-  return events.filter(e => {
-    if(start && e.date < start) return false;
-    if(end && e.date > end) return false;
-    return true;
-  });
+export function buildCalendarCommand(toolName, input) {
+  switch (toolName) {
+    case "open_calendar":
+      return { action: "set_view", payload: input.view || "month" };
+    case "add_calendar_event":
+      return {
+        action: "add_event",
+        payload: {
+          title: input.title,
+          date: input.date,
+          startTime: input.startTime || "09:00",
+          endTime: input.endTime || "10:00",
+          label: input.label || "work",
+          notes: input.notes || "",
+        },
+      };
+    case "delete_calendar_event":
+      return { action: "delete_event", payload: { id: input.id } };
+    case "update_calendar_event":
+      return { action: "update_event", payload: { id: input.id, changes: input.changes } };
+    case "go_to_date":
+      return { action: "go_to_date", payload: input.date };
+    default:
+      return null;
+  }
 }

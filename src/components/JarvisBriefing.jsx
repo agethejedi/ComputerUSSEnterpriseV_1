@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import HolographicPanel, { buildHoloCommand } from "./HolographicPanel.jsx";
-import CalendarPanel, { parseEventDate, parseEventTime } from "./CalendarPanel.jsx";
+import CalendarPanel, { buildCalendarCommand } from "./CalendarPanel.jsx";
 
 // ============================================================
 // VISUALIZER
@@ -399,33 +399,31 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify({ status: "briefing not yet implemented" });
 
     // ── Calendar ──────────────────────────────────────────────────────────
-    case "open_calendar":
+    case "open_calendar": {
       ctx.setCalendarOpen(true);
-      if (input.view) {
-        ctx.setCalendarCommand({ action: "set_view", payload: input.view, _ts: Date.now() });
-      }
+      const cmd = buildCalendarCommand(name, input);
+      if (cmd) ctx.setCalendarCommand({ ...cmd, _ts: Date.now() });
       return JSON.stringify({ ok: true, opened: true });
-    case "close_calendar":
-      ctx.setCalendarOpen(false);
-      return JSON.stringify({ ok: true });
+    }
     case "add_calendar_event":
     case "delete_calendar_event":
-    case "navigate_calendar": {
+    case "update_calendar_event":
+    case "go_to_date": {
+      ctx.setCalendarOpen(true);
       const cmd = buildCalendarCommand(name, input);
-      if (cmd && ctx.setCalendarCommand) {
-        ctx.setCalendarCommand({ ...cmd, _ts: Date.now() });
-        if (!ctx.calendarOpen) ctx.setCalendarOpen(true);
-      }
+      if (cmd) ctx.setCalendarCommand({ ...cmd, _ts: Date.now() });
       return JSON.stringify({ ok: true, action: name });
     }
     case "list_calendar_events": {
-      const range = input.dateRange || null;
-      const evts = getEventsForTool(ctx.calendarEvents || [], range);
-      return JSON.stringify({
-        events: evts,
-        count: evts.length,
-        note: evts.length === 0 ? "No events found in that range." : `Found ${evts.length} event(s).`,
-      });
+      // Return events from state for Claude to read
+      const startDate = input.startDate || new Date().toISOString().slice(0, 10);
+      const endDate = input.endDate || (() => {
+        const d = new Date(startDate);
+        d.setDate(d.getDate() + 7);
+        return d.toISOString().slice(0, 10);
+      })();
+      const evts = (ctx.calendarEvents || []).filter((e) => e.date >= startDate && e.date <= endDate);
+      return JSON.stringify({ events: evts, startDate, endDate, count: evts.length });
     }
 
     // ── Holographic interface ──────────────────────────────────────────────
@@ -1117,6 +1115,13 @@ export default function JarvisBriefing() {
         <div className="flex items-center gap-6 text-[10px] tracking-[0.25em]">
           <span className="opacity-60">{dateStr}</span>
           <span style={{ color: "#7DD3FC" }} className="tabular-nums">{timeStr}<span style={{ animation: "blink 1s steps(1) infinite" }}>:</span></span>
+          <button
+            onClick={() => setCalendarOpen(true)}
+            className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
+            style={{ border: "1px solid #7DD3FC44", color: "#7DD3FC88", background: "transparent" }}
+          >
+            📅 CALENDAR
+          </button>
           <span className="opacity-50">SYS.{MODE_LABELS[mode]}</span>
         </div>
       </div>
