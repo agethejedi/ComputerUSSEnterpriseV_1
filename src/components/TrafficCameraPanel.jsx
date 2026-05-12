@@ -177,10 +177,12 @@ export default function TrafficCameraPanel({ highlighted }) {
   return (
     <>
       <div
-        className="relative bg-slate-950/40 backdrop-blur-sm transition-all duration-500"
+        data-panel="traffic_cameras"
+      className="relative bg-slate-950/40 backdrop-blur-sm transition-all duration-500"
         style={{
-          border: `1px solid ${highlighted ? glowColor : `${ACCENT}33`}`,
-          boxShadow: highlighted ? `0 0 24px ${glowColor}66` : "none",
+          border: `2px solid ${ACCENT}`,
+          boxShadow: `0 0 16px ${ACCENT}66`,
+          minHeight: "50px",
         }}
       >
         {/* Corner brackets */}

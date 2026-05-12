@@ -1129,9 +1129,11 @@ export default function JarvisBriefing() {
       </div>
 
       <div className="relative z-10 grid grid-cols-12 gap-3 p-3">
-        <div className="col-span-12 lg:col-span-3 space-y-3">
+        <div className="col-span-12 lg:col-span-3 space-y-3 overflow-y-auto" style={{ maxHeight: "calc(100vh - 100px)" }}>
           <LocalWeather highlighted={highlightedPanel === "local_weather"} weather={weatherData.local} loading={weatherLoading} error={weatherError} />
           <NationalWeather highlighted={highlightedPanel === "national_weather"} weather={weatherData} />
+          <FlightPanel highlighted={highlightedPanel === "flight_tracker"} />
+          <TrafficCameraPanel highlighted={highlightedPanel === "traffic_cameras"} />
         </div>
 
         <div className="col-span-12 lg:col-span-6 space-y-3">
