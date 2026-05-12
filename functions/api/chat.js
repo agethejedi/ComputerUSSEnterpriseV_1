@@ -133,7 +133,135 @@ const TOOLS = [
     description: "Trigger the full scripted morning briefing sequence. Use only if the user explicitly asks for 'the morning briefing' or 'my briefing'.",
     input_schema: { type: "object", properties: {} },
   },
+
+  // ── Calendar ──────────────────────────────────────────────────────────────
+  {
+    name: "open_calendar",
+    description: "Open the JARVIS calendar panel. Optionally specify a view (month, week, day). Call this when the user asks to see their calendar, schedule, or agenda.",
+    input_schema: {
+      type: "object",
+      properties: {
+        view: { type: "string", enum: ["month", "week", "day"], description: "Which view to open. Defaults to month." },
+      },
+    },
+  },
+  {
+    name: "close_calendar",
+    description: "Close the calendar panel.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "add_calendar_event",
+    description: "Add an event to the JARVIS calendar. Parse natural language dates like 'tomorrow', 'next Tuesday', 'May 15th'. Times like '2pm', '14:00', '9:30am'. Labels: work, personal, health, finance, travel, other.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title:     { type: "string", description: "Event title." },
+        date:      { type: "string", description: "Date string — ISO (2026-05-15), relative (tomorrow, next Tuesday), or natural (May 15th)." },
+        startTime: { type: "string", description: "Start time — '2pm', '14:00', '9:30am'. Omit for all-day events." },
+        endTime:   { type: "string", description: "End time. Optional." },
+        label:     { type: "string", enum: ["work","personal","health","finance","travel","other"], description: "Color label category." },
+        notes:     { type: "string", description: "Optional notes." },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "list_calendar_events",
+    description: "List upcoming calendar events. Use this when the user asks what's on their schedule, what's coming up, or what they have today/this week.",
+    input_schema: {
+      type: "object",
+      properties: {
+        range: { type: "string", enum: ["today","tomorrow","this_week","next_week","this_month"], description: "Time range to query." },
+      },
+    },
+  },
+  {
+    name: "delete_calendar_event",
+    description: "Delete a calendar event by title or description. Always confirm with the user before deleting.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Title or partial title of event to delete." },
+      },
+      required: ["title"],
+    },
+  },
+
   // ── Holographic Interface ─────────────────────────────────────────────────
+  // ── Calendar ─────────────────────────────────────────────────────────────
+  {
+    name: "open_calendar",
+    description: "Open the JARVIS calendar panel. Call this when Ron asks to see his calendar, schedule, or agenda. Optionally specify a view.",
+    input_schema: {
+      type: "object",
+      properties: {
+        view: { type: "string", enum: ["month","week","day"], description: "Which view to open. Defaults to month." },
+      },
+    },
+  },
+  {
+    name: "close_calendar",
+    description: "Close the calendar panel.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "add_calendar_event",
+    description: "Add an event to the JARVIS calendar. Parse natural language dates and times — '2pm Tuesday' → date + startTime. Always confirm the event details before adding.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Event title." },
+        date: { type: "string", description: "Date in YYYY-MM-DD format." },
+        startTime: { type: "string", description: "Start time in HH:MM 24h format. e.g. '14:00'" },
+        endTime: { type: "string", description: "End time in HH:MM 24h format." },
+        label: { type: "string", enum: ["work","personal","health","finance","travel","other"], description: "Color label category." },
+        notes: { type: "string", description: "Optional notes." },
+        allDay: { type: "boolean", description: "True if this is an all-day event." },
+      },
+      required: ["title","date"],
+    },
+  },
+  {
+    name: "list_calendar_events",
+    description: "List calendar events. Use this when Ron asks what's on his schedule, what's coming up, or what he has this week/month/day.",
+    input_schema: {
+      type: "object",
+      properties: {
+        dateRange: {
+          type: "object",
+          properties: {
+            start: { type: "string", description: "Start date YYYY-MM-DD" },
+            end: { type: "string", description: "End date YYYY-MM-DD" },
+          },
+          description: "Optional date range filter. Omit for all events.",
+        },
+      },
+    },
+  },
+  {
+    name: "delete_calendar_event",
+    description: "Delete a calendar event by ID. First call list_calendar_events to find the ID, then confirm with Ron before deleting.",
+    input_schema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Event ID from list_calendar_events." },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "navigate_calendar",
+    description: "Navigate the calendar to a specific date.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "Date to navigate to in YYYY-MM-DD format." },
+      },
+      required: ["date"],
+    },
+  },
+
   {
     name: "activate_holographic",
     description: "Open the full-screen holographic interface — starts the webcam and Three.js scene. Call this before any load or manipulate commands if the panel is not already open.",
@@ -195,6 +323,44 @@ Rules for watchlist management:
 ## COMPARATIVE ANALYSIS
 
 When asked to compare watchlists or individual stocks ("how is financials doing versus tech?"), call compare_watchlists. Narrate the result conversationally: lead with the stronger performer, cite the top gainer and worst drag in each list, and keep it to two sentences. Don't read every ticker — summarize the story.
+
+## CALENDAR
+
+Ron maintains a personal calendar inside JARVIS. Events persist to Cloudflare KV.
+
+When Ron says things like:
+- "Open my calendar" → call open_calendar
+- "What's on my schedule today?" → call list_calendar_events(range: "today") then narrate
+- "Add a meeting tomorrow at 2pm" → call add_calendar_event, then open_calendar so he sees it
+- "Schedule a doctor appointment next Tuesday at 10am" → label: health, call add_calendar_event
+- "What do I have this week?" → call list_calendar_events(range: "this_week")
+- "Cancel my 2pm meeting" → confirm first, then delete_calendar_event
+
+Label mapping (use these automatically based on context):
+- Meetings, calls, work tasks → work
+- Personal appointments, family → personal  
+- Doctor, gym, health → health
+- Bills, investments, financial → finance
+- Flights, hotels, trips → travel
+- Everything else → other
+
+When adding an event, always open the calendar afterward so Ron can see it added.
+Narrate confirmations naturally: "Done — quarterly review added for Tuesday at 2 PM, labeled as work."
+
+## CALENDAR
+
+Ron has a personal JARVIS calendar for scheduling. It supports month, week, and day views with color-coded event labels (work/personal/health/finance/travel/other).
+
+When Ron says things like:
+- "What's on my schedule today/this week?" → call list_calendar_events with appropriate date range, then narrate naturally
+- "Open my calendar" / "Show me my calendar" → call open_calendar
+- "Add an event" / "Schedule a meeting" → parse the details, confirm with Ron, then call add_calendar_event
+- "Cancel my 2pm Tuesday" → call list_calendar_events first to find the ID, confirm, then delete_calendar_event
+- "What do I have coming up?" → list_calendar_events for the next 7 days
+
+Date handling: today is always available via JavaScript's Date. Convert natural language like "next Tuesday at 3pm" to YYYY-MM-DD and HH:MM format before calling the tool. When adding events, always read back the parsed details before saving — "I'll add a work event for Tuesday May 14th at 2pm, shall I go ahead?"
+
+Label selection: infer the label from context — meetings/calls → work, doctor → health, flights/hotels → travel, bills/investments → finance, birthdays/dinners → personal.
 
 ## HOLOGRAPHIC INTERFACE
 
