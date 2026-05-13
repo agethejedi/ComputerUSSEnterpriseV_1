@@ -128,6 +128,21 @@ export async function onRequestGet(context) {
   let data;
   try {
     const res = await fetch(apiUrl, { headers });
+    if (res.status === 429) {
+      // Rate limited — return empty payload with note, don't error loudly
+      const retryAfter = res.headers.get("x-rate-limit-retry-after-seconds") || 60;
+      return json({
+        fetchedAt: Date.now(),
+        count: 0,
+        aircraft: [],
+        authenticated: !!clientId,
+        rateLimited: true,
+        retryAfter: Number(retryAfter),
+        note: clientId
+          ? `Rate limited. Retry in ${retryAfter}s.`
+          : "Anonymous rate limit hit. Add OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET to Cloudflare env vars for higher limits.",
+      }, 200); // Return 200 so frontend doesn't show error, just empty map
+    }
     if (!res.ok) {
       return json({ error: `OpenSky returned ${res.status}`, anonymous: !clientId }, res.status);
     }
@@ -150,11 +165,14 @@ export async function onRequestGet(context) {
     authenticated: !!clientId,
   };
 
+  // Cache longer for anonymous (rate limit relief), shorter for authenticated
+  const maxAge = (clientId && clientSecret) ? 15 : 60;
+
   const response = new Response(JSON.stringify(payload), {
     status: 200,
     headers: {
       "Content-Type": "application/json",
-      "Cache-Control": "public, max-age=15",
+      "Cache-Control": `public, max-age=${maxAge}`,
       "x-cache": "MISS",
       ...CORS,
     },
