@@ -124,6 +124,9 @@ export default function FlightPanel({ highlighted }) {
   }, []);
 
   // ── Fetch flights ──────────────────────────────────────────────────────────
+  const [rateLimited, setRateLimited] = useState(false);
+  const [retryAfter, setRetryAfter] = useState(60);
+
   const fetchFlights = useCallback(async () => {
     try {
       const params = new URLSearchParams({
@@ -140,6 +143,14 @@ export default function FlightPanel({ highlighted }) {
         return;
       }
       const data = await res.json();
+      if (data.rateLimited) {
+        setRateLimited(true);
+        setRetryAfter(data.retryAfter || 60);
+        setAuthenticated(false);
+        setLoading(false);
+        return;
+      }
+      setRateLimited(false);
       setAircraft(data.aircraft || []);
       setAuthenticated(data.authenticated || false);
       setLastUpdated(new Date());
@@ -153,9 +164,12 @@ export default function FlightPanel({ highlighted }) {
 
   useEffect(() => {
     fetchFlights();
-    fetchIntervalRef.current = setInterval(fetchFlights, 15000);
+    // Anonymous: 60s refresh to stay within rate limits
+    // Authenticated: 15s refresh for live data
+    const interval = authenticated ? 15000 : 60000;
+    fetchIntervalRef.current = setInterval(fetchFlights, interval);
     return () => clearInterval(fetchIntervalRef.current);
-  }, [fetchFlights]);
+  }, [fetchFlights, authenticated]);
 
   // ── Update map markers ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -208,9 +222,8 @@ export default function FlightPanel({ highlighted }) {
       data-panel="flight_tracker"
       className="relative bg-slate-950/40 backdrop-blur-sm transition-all duration-500"
       style={{
-        border: `2px solid ${highlighted ? glowColor : ACCENT}`,
-        boxShadow: `0 0 16px ${ACCENT}66`,
-        minHeight: "50px",
+        border: `1px solid ${highlighted ? glowColor : `${ACCENT}33`}`,
+        boxShadow: highlighted ? `0 0 24px ${glowColor}66, inset 0 0 24px ${glowColor}22` : "none",
       }}
     >
       {/* Corner brackets */}
@@ -255,6 +268,19 @@ export default function FlightPanel({ highlighted }) {
               {error.includes("401") || error.includes("403")
                 ? "ADD OPENSKY_CLIENT_ID & OPENSKY_CLIENT_SECRET TO CLOUDFLARE ENV"
                 : error}
+            </span>
+          </div>
+        )}
+
+        {/* Rate limit overlay */}
+        {rateLimited && !loading && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center z-10 p-3 gap-2" style={{ background: "#020617cc" }}>
+            <span className="text-[10px] tracking-[0.2em]" style={{ color: "#FBBF24" }}>RATE LIMITED</span>
+            <span className="text-[8px] tracking-[0.15em] text-center opacity-70" style={{ color: "#FBBF24" }}>
+              ADD OPENSKY CREDENTIALS TO CLOUDFLARE FOR LIVE DATA
+            </span>
+            <span className="text-[8px] tracking-[0.1em] opacity-50" style={{ color: "#FBBF24" }}>
+              opensky-network.org → free account → API client
             </span>
           </div>
         )}
