@@ -193,6 +193,20 @@ const TOOLS = [
     },
   },
 
+  // ── Satellite Tracker ────────────────────────────────────────────────────────
+  {
+    name: "get_satellite_info",
+    description: "Get live satellite data from the N2YO tracker. Can return satellites currently overhead, position of a specific satellite, or pass predictions. Call this when Ron asks about satellites, the ISS, Starlink, or when something will be visible.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What Ron wants to know. Examples: 'how many satellites overhead', 'when is ISS visible', 'show me Starlink', 'where is Hubble'" },
+        noradId: { type: "number", description: "Specific NORAD ID if known. ISS=25544, Hubble=20580, Tiangong=37849" },
+        category: { type: "string", description: "Category filter: 0=all, 2=stations, 18=starlink, 22=gps, 3=weather, 52=military, 65=amateur" },
+      },
+    },
+  },
+
   // ── Holographic Interface ─────────────────────────────────────────────────
   {
     name: "activate_holographic",
@@ -310,6 +324,35 @@ Always open the calendar when adding or showing events — call open_calendar al
 For "what's on my schedule" questions, call list_calendar_events and read the results conversationally. If nothing is scheduled, say so.
 
 Today's date for reference: always use the current date context when parsing relative dates like "tomorrow" or "next week."
+
+## SATELLITE TRACKER
+
+The dashboard has a live satellite tracking panel showing all satellites currently overhead, powered by N2YO API. Updates every 30 seconds. Satellites are color-coded: cyan=space stations, green=weather, amber=GPS/nav, rose=military, orange=Starlink, purple=amateur.
+
+When Ron asks about satellites, call get_satellite_info and highlight_panel("satellite_tracker"). Use cases:
+- "Where is the ISS?" → type=position, noradId=25544
+- "When is the ISS visible tonight?" → type=passes, noradId=25544
+- "How many satellites are overhead?" → type=above
+- "Show me Starlink satellites" → type=category, category=starlink
+- "What GPS satellites are above us?" → type=category, category=gps
+
+Pass predictions are for The Colony, TX (lat 33.0807, lon -96.8867). When reporting passes, say: "The ISS will pass over at 9:47 PM heading northwest to southeast, reaching 72 degrees elevation. Should be visible to the naked eye."
+
+## SATELLITE TRACKER
+
+The dashboard has a live satellite tracking panel showing all satellites currently overhead The Colony, TX using the N2YO API. Updates every 60 seconds.
+
+When Ron asks about satellites, call get_satellite_info and highlight_panel("satellite_tracker"). You can tell him:
+- How many satellites are overhead right now and by category
+- Where the ISS, Hubble, or Tiangong is right now
+- When the ISS will next be visible from The Colony (pass predictions)
+- How many Starlink satellites are overhead
+
+Key NORAD IDs: ISS=25544, Hubble=20580, Tiangong=37849
+
+Pass predictions include start time (in CT), maximum elevation in degrees, and duration in seconds. An elevation above 40° means it'll be bright and easy to see. Narrate pass times naturally: "The ISS will pass over tonight at 9:47 PM, reaching 52 degrees above the horizon — that's high enough to see clearly if skies are clear."
+
+N2YO_API_KEY must be configured in Cloudflare env vars for this to work.
 
 ## FLIGHT TRACKER
 
