@@ -165,8 +165,17 @@ export default function FlightPanel({ highlighted }) {
       setError(null);
       setLoading(false);
     } catch (err) {
-      setError(`Network error: ${String(err)}`);
-      setLoading(false);
+      // ERR_NETWORK_CHANGED and similar transient errors — keep existing data, retry silently
+      const isTransient = String(err).includes("network") || 
+                          String(err).includes("fetch") ||
+                          String(err).includes("Failed to fetch");
+      if (isTransient) {
+        setIsStale(true);
+        setLoading(false);
+      } else {
+        setError(`Network error: ${String(err)}`);
+        setLoading(false);
+      }
     }
   }, []);
 
