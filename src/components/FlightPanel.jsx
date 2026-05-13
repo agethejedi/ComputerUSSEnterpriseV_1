@@ -126,6 +126,7 @@ export default function FlightPanel({ highlighted }) {
   // ── Fetch flights ──────────────────────────────────────────────────────────
   const [rateLimited, setRateLimited] = useState(false);
   const [retryAfter, setRetryAfter] = useState(60);
+  const [isStale, setIsStale] = useState(false);
 
   const fetchFlights = useCallback(async () => {
     try {
@@ -150,6 +151,13 @@ export default function FlightPanel({ highlighted }) {
         setLoading(false);
         return;
       }
+      if (data.timedOut) {
+        // Keep existing aircraft on map, mark as stale
+        setIsStale(true);
+        setLoading(false);
+        return;
+      }
+      setIsStale(false);
       setRateLimited(false);
       setAircraft(data.aircraft || []);
       setAuthenticated(data.authenticated || false);
@@ -242,8 +250,8 @@ export default function FlightPanel({ highlighted }) {
         </div>
         <div className="flex items-center gap-3">
           {!loading && !error && (
-            <span className="text-[9px] tracking-[0.15em]" style={{ color: ACCENT }}>
-              {aircraft.length} AIRCRAFT
+            <span className="text-[9px] tracking-[0.15em]" style={{ color: isStale ? "#FBBF24" : ACCENT }}>
+              {aircraft.length} AIRCRAFT{isStale ? " · RETRYING" : ""}
             </span>
           )}
           <span className="text-[9px] tracking-[0.2em] opacity-50" style={{ color: ACCENT }}>FLT.01</span>
