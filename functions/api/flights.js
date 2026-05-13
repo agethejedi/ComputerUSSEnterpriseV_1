@@ -92,9 +92,10 @@ export async function onRequestGet(context) {
   const lomax = parseFloat(url.searchParams.get("lomax") || DFW_BOX.lomax);
   const icao24 = url.searchParams.get("icao24");
 
-  // Cache key based on query
+  // Cache key includes auth status so authenticated/anonymous don't share stale cache
+  const authKey = (clientId && clientSecret) ? "auth" : "anon";
   const cacheKey = new Request(
-    `https://jarvis-flights-cache/${icao24 || `${lamin},${lomin},${lamax},${lomax}`}`,
+    `https://jarvis-flights-cache-v2/${authKey}/${icao24 || `${lamin},${lomin},${lamax},${lomax}`}`,
     request
   );
   const cache = caches.default;
@@ -127,7 +128,27 @@ export async function onRequestGet(context) {
 
   let data;
   try {
-    const res = await fetch(apiUrl, { headers });
+    // Try up to 2 times with 4s timeout each — total max ~9s
+    let res;
+    let lastFetchErr;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4500);
+      try {
+        res = await fetch(apiUrl, { headers, signal: controller.signal });
+        clearTimeout(timeoutId);
+        break; // success
+      } catch (err) {
+        clearTimeout(timeoutId);
+        lastFetchErr = err;
+        if (attempt < 1) {
+          // Brief pause before retry
+          await new Promise(r => setTimeout(r, 500));
+        }
+      }
+    }
+    if (!res) throw lastFetchErr || new Error("All fetch attempts failed");
+
     if (res.status === 429) {
       // Rate limited — return empty payload with note, don't error loudly
       const retryAfter = res.headers.get("x-rate-limit-retry-after-seconds") || 60;
@@ -148,6 +169,18 @@ export async function onRequestGet(context) {
     }
     data = await res.json();
   } catch (err) {
+    const isTimeout = String(err).includes("aborted") || String(err).includes("timeout");
+    // Return empty payload on timeout rather than 502 — panel shows "no data" gracefully
+    if (isTimeout) {
+      return json({
+        fetchedAt: Date.now(),
+        count: 0,
+        aircraft: [],
+        authenticated: !!clientId,
+        timedOut: true,
+        note: "OpenSky API did not respond in time. Will retry.",
+      }, 200);
+    }
     return json({ error: "OpenSky fetch failed", detail: String(err) }, 502);
   }
 
@@ -165,8 +198,8 @@ export async function onRequestGet(context) {
     authenticated: !!clientId,
   };
 
-  // Cache longer for anonymous (rate limit relief), shorter for authenticated
-  const maxAge = (clientId && clientSecret) ? 15 : 60;
+  // Cache: 45s authenticated (live enough), 90s anonymous (rate limit relief)
+  const maxAge = (clientId && clientSecret) ? 45 : 90;
 
   const response = new Response(JSON.stringify(payload), {
     status: 200,
