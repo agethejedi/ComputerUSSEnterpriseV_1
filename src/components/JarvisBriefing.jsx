@@ -1046,6 +1046,7 @@ export default function JarvisBriefing() {
             activeWatchlistName: activeWatchlistNameRef.current,
             setHighlightedPanel,
             setHoloCommand,
+            setResearchCommand,
             setCalendarOpen,
             setCalendarCommand: (cmd) => setCalendarCommand(cmd),
             setActiveWatchlistName: (name) => { setActiveWatchlistName(name); lsSaveActive(name); },
