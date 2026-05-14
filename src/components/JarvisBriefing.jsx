@@ -444,10 +444,27 @@ async function executeToolCall(name, input, ctx) {
     case "deactivate_holographic":
     case "load_holographic_model":
     case "manipulate_holographic":
-    case "load_holographic_image": {
+    case "load_holographic_image":
+    case "show_holographic_map": {
       const cmd = buildHoloCommand(name, input, findNasaModel);
       if (cmd && ctx.setHoloCommand) {
         ctx.setHoloCommand({ ...cmd, _ts: Date.now() });
+      }
+      // If map with location, kick off geocode
+      if (name === "show_holographic_map" && input.location) {
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(input.location)}&limit=1`)
+          .then(r => r.json())
+          .then(results => {
+            if (results?.[0]) {
+              const { lat, lon, display_name } = results[0];
+              ctx.setHoloCommand({
+                action: "fly_to",
+                payload: { lat: parseFloat(lat), lon: parseFloat(lon), label: display_name.split(",")[0], zoom: input.zoom || 10 },
+                _ts: Date.now() + 2000,
+              });
+            }
+          })
+          .catch(() => {});
       }
       return JSON.stringify({ ok: true, action: name });
     }

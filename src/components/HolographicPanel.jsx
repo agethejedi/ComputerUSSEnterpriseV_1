@@ -24,6 +24,36 @@ const GESTURE_LABELS = {
 };
 
 // ============================================================
+// LEAFLET LOADER (lazy, cached — reuses CDN same as weather/flight maps)
+// ============================================================
+
+let holoLeafletPromise = null;
+function loadLeaflet() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  if (window.L) return Promise.resolve(window.L);
+  if (holoLeafletPromise) return holoLeafletPromise;
+  holoLeafletPromise = new Promise((resolve, reject) => {
+    if (!document.querySelector("link[data-leaflet]")) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      link.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+      link.crossOrigin = "";
+      link.setAttribute("data-leaflet", "");
+      document.head.appendChild(link);
+    }
+    const s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
+    s.crossOrigin = "";
+    s.onload = () => resolve(window.L);
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+  return holoLeafletPromise;
+}
+
+// ============================================================
 // MEDIAPIPE CDN LOADER (still loaded dynamically — too large for npm)
 // ============================================================
 
@@ -115,26 +145,30 @@ class HoloScene {
   // Load a GLTF model by URL
   async loadGLTF(url, scale = 1) {
     const THREE = this.THREE;
+    console.log("[JARVIS] loadGLTF starting:", url);
     // Clear BEFORE starting load so wireframe disappears immediately
     this.clearCurrentObject();
+    console.log("[JARVIS] pivot children after clear:", this.pivot.children.length);
     return new Promise((resolve, reject) => {
       const loader = new GLTFLoader();
       loader.load(
         url,
         (gltf) => {
+          console.log("[JARVIS] GLTF loaded successfully, scene children:", gltf.scene.children.length);
           // Clear again in case anything accumulated during async load
           this.clearCurrentObject();
           const model = gltf.scene;
 
           // Add to scene first so world transforms are computed correctly
           this.pivot.add(model);
+          console.log("[JARVIS] model added to pivot, pivot children:", this.pivot.children.length);
 
           // Force matrix update so Box3 gets accurate bounds
           model.updateMatrixWorld(true);
           const box = new THREE.Box3().setFromObject(model);
           const size = box.getSize(new THREE.Vector3());
-          const center = box.getCenter(new THREE.Vector3());
           const maxDim = Math.max(size.x, size.y, size.z);
+          console.log("[JARVIS] model size:", size, "maxDim:", maxDim);
 
           // Guard against degenerate models (zero size before textures load)
           if (maxDim > 0 && isFinite(maxDim)) {
@@ -147,30 +181,53 @@ class HoloScene {
             const center2 = box2.getCenter(new THREE.Vector3());
             // Offset model so it's centered at origin
             model.position.set(-center2.x, -center2.y, -center2.z);
+            console.log("[JARVIS] model scaled to:", scaleF, "centered at:", center2);
+          } else {
+            console.warn("[JARVIS] degenerate model size — maxDim:", maxDim);
           }
 
-          // Apply subtle holographic emissive tint
+          // Apply holographic cyan emissive tint to make model visible over webcam
+          let meshCount = 0;
           model.traverse((child) => {
             if (child.isMesh && child.material) {
+              meshCount++;
               const mats = Array.isArray(child.material) ? child.material : [child.material];
               mats.forEach((mat) => {
-                if (mat.emissive) {
-                  mat.emissive.set(0x0a1a2e);
-                  mat.emissiveIntensity = 0.2;
+                // Boost emissive so model is visible even in screen blend mode
+                if (mat.emissive !== undefined) {
+                  mat.emissive.set(0x003344);
+                  mat.emissiveIntensity = 0.8;
                 }
+                // Ensure model isn't transparent
+                mat.transparent = false;
+                mat.opacity = 1.0;
+                mat.needsUpdate = true;
               });
             }
           });
+          console.log("[JARVIS] meshes found and tinted:", meshCount);
+
+          // DEBUG: Add a bright red sphere at origin to confirm rendering works
+          const debugGeo = new THREE.SphereGeometry(0.2, 16, 16);
+          const debugMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+          const debugSphere = new THREE.Mesh(debugGeo, debugMat);
+          debugSphere.position.set(0, 0, 0);
+          this.pivot.add(debugSphere);
+          console.log("[JARVIS] DEBUG red sphere added at origin");
 
           this.currentObject = model;
           resolve(model);
         },
-        undefined,
+        (progress) => {
+          if (progress.total > 0) {
+            console.log("[JARVIS] loading progress:", Math.round(progress.loaded / progress.total * 100) + "%");
+          }
+        },
         (err) => {
+          console.error("[JARVIS] GLTF load error:", err);
           // Remove from pivot if load failed after adding
-          if (this.pivot.children.length > 0) {
-            const last = this.pivot.children[this.pivot.children.length - 1];
-            this.pivot.remove(last);
+          while (this.pivot.children.length > 0) {
+            this.pivot.remove(this.pivot.children[0]);
           }
           reject(err);
         }
@@ -279,6 +336,144 @@ class HoloScene {
         reject
       );
     });
+  }
+
+  // ── MAP MODE ────────────────────────────────────────────────────────────────
+
+  // Load a live map as a canvas texture on a floating plane
+  loadFlatMap(mapCanvas) {
+    const THREE = this.THREE;
+    this.clearCurrentObject();
+    this.mapMode = "flat";
+
+    const texture = new THREE.CanvasTexture(mapCanvas);
+    texture.needsUpdate = true;
+    this._mapTexture = texture;
+
+    const geo = new THREE.PlaneGeometry(3.2, 2.0);
+    const mat = new THREE.MeshBasicMaterial({
+      map: texture,
+      side: THREE.DoubleSide,
+    });
+    const plane = new THREE.Mesh(geo, mat);
+
+    // HUD frame border
+    const frameGeo = new THREE.EdgesGeometry(geo);
+    const frameMat = new THREE.LineBasicMaterial({ color: 0x67E8F9, linewidth: 2 });
+    const frame = new THREE.LineSegments(frameGeo, frameMat);
+    plane.add(frame);
+
+    // Scan line effect overlay
+    const scanGeo = new THREE.PlaneGeometry(3.2, 2.0);
+    const scanMat = new THREE.MeshBasicMaterial({
+      color: 0x67E8F9,
+      transparent: true,
+      opacity: 0.03,
+      wireframe: false,
+    });
+    const scan = new THREE.Mesh(scanGeo, scanMat);
+    scan.position.z = 0.001;
+    plane.add(scan);
+
+    this.pivot.add(plane);
+    this.currentObject = plane;
+    this.autoRotate = false;
+
+    // Start texture update loop
+    this._startMapTextureUpdate();
+    return plane;
+  }
+
+  // Load a 3D globe with equirectangular texture
+  loadGlobe(textureUrl) {
+    const THREE = this.THREE;
+    this.clearCurrentObject();
+    this.mapMode = "globe";
+
+    const group = new THREE.Group();
+
+    // Main sphere
+    const geo = new THREE.SphereGeometry(1.2, 64, 32);
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = "anonymous";
+
+    const mat = new THREE.MeshPhongMaterial({
+      color: 0xffffff,
+      specular: 0x333333,
+      shininess: 15,
+    });
+    const sphere = new THREE.Mesh(geo, mat);
+    group.add(sphere);
+
+    // Atmosphere glow ring
+    const atmGeo = new THREE.SphereGeometry(1.25, 32, 16);
+    const atmMat = new THREE.MeshBasicMaterial({
+      color: 0x67E8F9,
+      transparent: true,
+      opacity: 0.06,
+      side: THREE.BackSide,
+    });
+    group.add(new THREE.Mesh(atmGeo, atmMat));
+
+    // Equator ring
+    const eqGeo = new THREE.TorusGeometry(1.26, 0.004, 8, 128);
+    const eqMat = new THREE.MeshBasicMaterial({ color: 0x67E8F9, transparent: true, opacity: 0.4 });
+    group.add(new THREE.Mesh(eqGeo, eqMat));
+
+    // Load texture
+    loader.load(
+      textureUrl,
+      (texture) => { mat.map = texture; mat.needsUpdate = true; },
+      undefined,
+      () => {
+        // Fallback: blue/green procedural planet
+        mat.color.set(0x1a3a5c);
+        mat.needsUpdate = true;
+      }
+    );
+
+    // Grid lines overlay
+    const gridMat = new THREE.MeshBasicMaterial({
+      color: 0x67E8F9,
+      transparent: true,
+      opacity: 0.08,
+      wireframe: true,
+    });
+    const gridGeo = new THREE.SphereGeometry(1.21, 18, 9);
+    group.add(new THREE.Mesh(gridGeo, gridMat));
+
+    this.pivot.add(group);
+    this.currentObject = group;
+    this.autoRotate = true; // Globe slowly spins
+    this._globeSphere = sphere;
+    return group;
+  }
+
+  // Update the globe texture (for tile style changes)
+  updateGlobeTexture(textureUrl) {
+    if (!this._globeSphere) return;
+    const THREE = this.THREE;
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = "anonymous";
+    loader.load(textureUrl, (texture) => {
+      this._globeSphere.material.map = texture;
+      this._globeSphere.material.needsUpdate = true;
+    });
+  }
+
+  // Update flat map texture from canvas
+  updateMapTexture() {
+    if (this._mapTexture) {
+      this._mapTexture.needsUpdate = true;
+    }
+  }
+
+  _startMapTextureUpdate() {
+    if (this._mapUpdateInterval) clearInterval(this._mapUpdateInterval);
+    this._mapUpdateInterval = setInterval(() => {
+      if (!this.animating) { clearInterval(this._mapUpdateInterval); return; }
+      this.updateMapTexture();
+    }, 500);
   }
 
   clearCurrentObject() {
@@ -394,8 +589,206 @@ class HoloScene {
     this.renderer.setSize(width, height);
   }
 
+  // ── MAP MODE ─────────────────────────────────────────────────────────────
+
+  // Load flat map — renders Leaflet map onto an off-screen canvas, uses as texture
+  loadFlatMap(leafletMap, style = "dark") {
+    const THREE = this.THREE;
+    this.clearCurrentObject();
+    this.mapMode = "flat";
+    this.autoRotate = false;
+
+    // Create a canvas texture from the Leaflet map
+    const mapCanvas = leafletMap.getContainer().querySelector("canvas") ||
+                      leafletMap.getContainer();
+
+    // Use CanvasTexture — updates live as map renders
+    const texture = new THREE.CanvasTexture(leafletMap.getContainer());
+    texture.needsUpdate = true;
+
+    const aspect = this.width / this.height;
+    const geo = new THREE.PlaneGeometry(3.5, 3.5 / aspect);
+    const mat = new THREE.MeshBasicMaterial({
+      map: texture,
+      side: THREE.DoubleSide,
+    });
+    const plane = new THREE.Mesh(geo, mat);
+
+    // HUD frame border
+    const edgesGeo = new THREE.EdgesGeometry(geo);
+    const edgesMat = new THREE.LineBasicMaterial({ color: 0x67E8F9, linewidth: 2 });
+    const frame = new THREE.LineSegments(edgesGeo, edgesMat);
+    plane.add(frame);
+
+    // Corner bracket accents
+    const bracketColor = 0x67E8F9;
+    [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(([sx, sy]) => {
+      const bGeo = new THREE.BufferGeometry();
+      const s = 0.2;
+      const hw = (3.5 / 2) * 0.98;
+      const hh = (3.5 / aspect / 2) * 0.98;
+      const verts = new Float32Array([
+        sx * hw, sy * (hh - s * sy < 0 ? hh - s : hh + s), 0,
+        sx * hw, sy * hh, 0,
+        sx * (hw - s), sy * hh, 0,
+      ]);
+      bGeo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+      const bMat = new THREE.LineBasicMaterial({ color: bracketColor });
+      const bracket = new THREE.Line(bGeo, bMat);
+      plane.add(bracket);
+    });
+
+    this.pivot.add(plane);
+    this.currentObject = plane;
+    this.mapTexture = texture;
+
+    // Start texture update loop
+    this._startMapTextureUpdate();
+    return plane;
+  }
+
+  // Load globe mode — sphere with equirectangular map texture
+  loadGlobe(style = "dark") {
+    const THREE = this.THREE;
+    this.clearCurrentObject();
+    this.mapMode = "globe";
+    this.autoRotate = true;
+
+    const textureUrls = {
+      dark:      "https://unpkg.com/three-globe/example/img/earth-dark.jpg",
+      satellite: "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
+      street:    "https://unpkg.com/three-globe/example/img/earth-day.jpg",
+    };
+
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = "anonymous";
+
+    const group = new THREE.Group();
+
+    // Main sphere
+    const geo = new THREE.SphereGeometry(1.4, 64, 64);
+    const mat = new THREE.MeshPhongMaterial({
+      map: loader.load(textureUrls[style] || textureUrls.dark),
+      specular: new THREE.Color(0x333333),
+      shininess: 15,
+    });
+    const sphere = new THREE.Mesh(geo, mat);
+    group.add(sphere);
+
+    // Atmosphere glow
+    const atmoGeo = new THREE.SphereGeometry(1.45, 32, 32);
+    const atmoMat = new THREE.MeshBasicMaterial({
+      color: 0x1a4a8a,
+      transparent: true,
+      opacity: 0.15,
+      side: THREE.FrontSide,
+    });
+    const atmosphere = new THREE.Mesh(atmoGeo, atmoMat);
+    group.add(atmosphere);
+
+    // Wireframe overlay — subtle grid lines
+    const wireGeo = new THREE.SphereGeometry(1.42, 18, 18);
+    const wireMat = new THREE.MeshBasicMaterial({
+      color: 0x67E8F9,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.08,
+    });
+    group.add(new THREE.Mesh(wireGeo, wireMat));
+
+    // Observer location pin — The Colony TX
+    const pinLat = 33.0807 * Math.PI / 180;
+    const pinLon = -96.8867 * Math.PI / 180;
+    const pinR = 1.45;
+    const pinX = pinR * Math.cos(pinLat) * Math.sin(pinLon + Math.PI);
+    const pinY = pinR * Math.sin(pinLat);
+    const pinZ = pinR * Math.cos(pinLat) * Math.cos(pinLon + Math.PI);
+    const pinGeo = new THREE.SphereGeometry(0.025, 8, 8);
+    const pinMat = new THREE.MeshBasicMaterial({ color: 0x67E8F9 });
+    const pin = new THREE.Mesh(pinGeo, pinMat);
+    pin.position.set(pinX, pinY, pinZ);
+    group.add(pin);
+
+    // Pulse ring around pin
+    const ringGeo = new THREE.RingGeometry(0.03, 0.05, 16);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0x67E8F9, transparent: true, opacity: 0.6, side: THREE.DoubleSide,
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.set(pinX, pinY, pinZ);
+    ring.lookAt(0, 0, 0);
+    group.add(ring);
+
+    this.pivot.add(group);
+    this.currentObject = group;
+    this._globeSphere = sphere;
+    return group;
+  }
+
+  // Update globe texture (for style switching)
+  updateGlobeTexture(style) {
+    if (!this._globeSphere) return;
+    const THREE = this.THREE;
+    const urls = {
+      dark:      "https://unpkg.com/three-globe/example/img/earth-dark.jpg",
+      satellite: "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
+      street:    "https://unpkg.com/three-globe/example/img/earth-day.jpg",
+    };
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = "anonymous";
+    loader.load(urls[style] || urls.dark, (tex) => {
+      this._globeSphere.material.map = tex;
+      this._globeSphere.material.needsUpdate = true;
+    });
+  }
+
+  // Fly to a location on the globe (highlight with a marker)
+  flyToLocation(lat, lon, label) {
+    const THREE = this.THREE;
+    if (this.mapMode !== "globe" || !this.currentObject) return;
+
+    // Remove previous fly-to markers
+    const toRemove = this.currentObject.children.filter(c => c._flyToMarker);
+    toRemove.forEach(c => this.currentObject.remove(c));
+
+    const latR = lat * Math.PI / 180;
+    const lonR = lon * Math.PI / 180;
+    const r = 1.48;
+    const x = r * Math.cos(latR) * Math.sin(lonR + Math.PI);
+    const y = r * Math.sin(latR);
+    const z = r * Math.cos(latR) * Math.cos(lonR + Math.PI);
+
+    const markerGeo = new THREE.SphereGeometry(0.03, 8, 8);
+    const markerMat = new THREE.MeshBasicMaterial({ color: 0xFBBF24 });
+    const marker = new THREE.Mesh(markerGeo, markerMat);
+    marker.position.set(x, y, z);
+    marker._flyToMarker = true;
+    this.currentObject.add(marker);
+
+    // Rotate globe to face the location
+    this.pivot.rotation.y = -(lonR + Math.PI);
+    this.pivot.rotation.x = -latR;
+  }
+
+  _startMapTextureUpdate() {
+    if (this._mapUpdateInterval) clearInterval(this._mapUpdateInterval);
+    this._mapUpdateInterval = setInterval(() => {
+      if (this.mapTexture) this.mapTexture.needsUpdate = true;
+    }, 800);
+  }
+
+  stopMapTextureUpdate() {
+    if (this._mapUpdateInterval) {
+      clearInterval(this._mapUpdateInterval);
+      this._mapUpdateInterval = null;
+    }
+    this.mapTexture = null;
+    this.mapMode = null;
+  }
+
   destroy() {
     this.animating = false;
+    this.stopMapTextureUpdate();
     this.renderer.dispose();
   }
 }
@@ -415,6 +808,28 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
   const [mediapiipeReady, setMediapipeReady] = useState(false);
   const [threeReady, setThreeReady] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
+
+  // ── Map mode state ──────────────────────────────────────────────────────
+  const [mapMode, setMapMode] = useState(null); // null | "flat" | "globe"
+  const [mapStyle, setMapStyle] = useState("dark"); // dark | satellite | street
+  const [mapLocation, setMapLocation] = useState("The Colony, TX");
+  const mapLeafletRef = useRef(null);    // Leaflet map instance
+  const mapContainerRef = useRef(null);  // off-screen div for Leaflet
+  const mapTextureIntervalRef = useRef(null);
+
+  // Tile URLs for each style
+  const MAP_TILES = {
+    dark:      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    satellite: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    street:    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+  };
+
+  // Globe texture URLs
+  const GLOBE_TEXTURES = {
+    dark:      "https://unpkg.com/three-globe/example/img/earth-night.jpg",
+    satellite: "https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg",
+    street:    "https://unpkg.com/three-globe/example/img/earth-day.jpg",
+  };
 
   const containerRef = useRef(null);
   const videoRef = useRef(null);
@@ -437,6 +852,110 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
     setCurrentModel(DEFAULT_MODEL);
     setThreeReady(true);
   }, []);
+
+  // ── Map mode functions ──────────────────────────────────────────────────────
+
+  const initFlatMap = useCallback(async (location) => {
+    const L = await loadLeaflet();
+    if (!L || !sceneRef.current) return;
+
+    // Create off-screen container for Leaflet if it doesn't exist
+    if (!mapContainerRef.current) {
+      const div = document.createElement("div");
+      div.style.cssText = "position:fixed;left:-9999px;top:0;width:800px;height:500px;";
+      document.body.appendChild(div);
+      mapContainerRef.current = div;
+    }
+
+    // Geocode location → lat/lon
+    let lat = 33.0807, lon = -96.8867; // default: The Colony
+    if (location && location !== "The Colony, TX") {
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`,
+          { headers: { "User-Agent": "JARVIS-Dashboard/1.0" } }
+        );
+        const data = await res.json();
+        if (data[0]) { lat = parseFloat(data[0].lat); lon = parseFloat(data[0].lon); }
+      } catch {}
+    }
+    setMapLocation(location || "The Colony, TX");
+
+    // Init or update Leaflet map
+    if (!mapLeafletRef.current) {
+      const map = L.map(mapContainerRef.current, {
+        zoomControl: false, attributionControl: false,
+        dragging: false, scrollWheelZoom: false,
+      }).setView([lat, lon], 12);
+
+      const tileLayer = L.tileLayer(MAP_TILES.dark, { maxZoom: 18 }).addTo(map);
+      mapLeafletRef.current = { map, tileLayer };
+    } else {
+      mapLeafletRef.current.map.setView([lat, lon], 12);
+    }
+
+    // Wait for tiles to load then grab canvas
+    await new Promise(r => setTimeout(r, 1500));
+    const mapCanvas = mapContainerRef.current.querySelector("canvas");
+    if (!mapCanvas) {
+      // Leaflet uses div+img tiles, need to composite them
+      // Use the container itself as source via html2canvas-style approach
+      // Fallback: create a canvas and draw a placeholder
+      const fallback = document.createElement("canvas");
+      fallback.width = 800; fallback.height = 500;
+      const ctx = fallback.getContext("2d");
+      ctx.fillStyle = "#0B1626";
+      ctx.fillRect(0, 0, 800, 500);
+      ctx.strokeStyle = "#67E8F9";
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.2;
+      for (let x = 0; x < 800; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 500); ctx.stroke(); }
+      for (let y = 0; y < 500; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(800, y); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#67E8F9";
+      ctx.font = "20px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(`MAP: ${location || "The Colony, TX"}`, 400, 240);
+      ctx.fillText(`${lat.toFixed(4)}° N, ${Math.abs(lon).toFixed(4)}° W`, 400, 270);
+      sceneRef.current.loadFlatMap(fallback);
+    } else {
+      sceneRef.current.loadFlatMap(mapCanvas);
+    }
+
+    setMapMode("flat");
+    setCurrentModel({ id: "map_flat", name: `MAP: ${location || "The Colony"}`, category: "map", description: `Live map — ${location || "The Colony, TX"}` });
+    setLoadingMsg("");
+  }, [MAP_TILES]);
+
+  const initGlobe = useCallback((style) => {
+    if (!sceneRef.current) return;
+    const textureUrl = GLOBE_TEXTURES[style || mapStyle];
+    sceneRef.current.loadGlobe(textureUrl);
+    setMapMode("globe");
+    setCurrentModel({ id: "map_globe", name: "EARTH — 3D GLOBE", category: "map", description: "Interactive 3D globe. Spin with your hands." });
+    setLoadingMsg("");
+  }, [mapStyle, GLOBE_TEXTURES]);
+
+  const switchMapStyle = useCallback((style) => {
+    setMapStyle(style);
+    if (mapMode === "globe" && sceneRef.current) {
+      sceneRef.current.updateGlobeTexture(GLOBE_TEXTURES[style]);
+    } else if (mapMode === "flat" && mapLeafletRef.current) {
+      mapLeafletRef.current.tileLayer.setUrl(MAP_TILES[style]);
+    }
+  }, [mapMode, MAP_TILES, GLOBE_TEXTURES]);
+
+  const flyToLocation = useCallback(async (location) => {
+    if (!location) return;
+    setLoadingMsg(`Navigating to ${location}…`);
+    if (mapMode === "flat" || !mapMode) {
+      await initFlatMap(location);
+    } else if (mapMode === "globe") {
+      // Just update the label for globe mode
+      setMapLocation(location);
+      setLoadingMsg("");
+    }
+  }, [mapMode, initFlatMap]);
 
   // ── Initialize MediaPipe ─────────────────────────────────────────────────
   const initMediaPipe = useCallback(async () => {
@@ -612,6 +1131,73 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
     setHandCount(0);
   }, []);
 
+  // ── Map functions ────────────────────────────────────────────────────────
+
+  const initLeafletMap = useCallback(async (style) => {
+    if (!mapContainerRef.current) return null;
+    const L = await loadLeaflet();
+    if (!L) return null;
+
+    // Destroy existing map instance
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.remove();
+      mapInstanceRef.current = null;
+    }
+
+    const TILE_URLS = {
+      dark:      ["https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", "abcd"],
+      satellite: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", ""],
+      street:    ["https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", "abc"],
+    };
+
+    const [tileUrl, subdomains] = TILE_URLS[style] || TILE_URLS.dark;
+
+    const map = L.map(mapContainerRef.current, {
+      zoomControl: false,
+      attributionControl: false,
+      center: [33.0807, -96.8867],
+      zoom: 10,
+    });
+
+    L.tileLayer(tileUrl, {
+      maxZoom: 18,
+      subdomains: subdomains || "abc",
+    }).addTo(map);
+
+    mapInstanceRef.current = map;
+    return map;
+  }, []);
+
+  const loadMapFlat = useCallback(async (style = "dark") => {
+    if (!sceneRef.current) return;
+    setLoadingMsg("Initializing map…");
+    setMapMode("flat");
+    setMapStyle(style);
+
+    const map = await initLeafletMap(style);
+    if (!map) { setLoadingMsg("Map init failed"); return; }
+
+    // Wait for tiles to load before capturing as texture
+    setTimeout(() => {
+      map.invalidateSize();
+      sceneRef.current?.loadFlatMap(map, style);
+      setCurrentModel({ id: "map_flat", name: "Holographic Map", category: "map", description: "Live map — drag to pan, pinch to rotate." });
+      setLoadingMsg("");
+    }, 1500);
+  }, [initLeafletMap]);
+
+  const loadMapGlobe = useCallback((style = "dark") => {
+    if (!sceneRef.current) return;
+    setLoadingMsg("Loading globe…");
+    setMapMode("globe");
+    setMapStyle(style);
+    sceneRef.current.loadGlobe(style);
+    setCurrentModel({ id: "map_globe", name: "Earth Globe", category: "map", description: "Interactive globe — spin with your hands." });
+    setLoadingMsg("");
+  }, []);
+
+
+
   // ── Load NASA model ──────────────────────────────────────────────────────
   const loadNasaModel = useCallback(async (modelDef) => {
     if (!sceneRef.current) return { ok: false, error: "Scene not initialized" };
@@ -694,7 +1280,31 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
         if (isExpanded && sceneRef.current) {
           sceneRef.current.loadWireframe();
           setCurrentModel(DEFAULT_MODEL);
+          setMapMode(null);
         }
+        break;
+      case "load_flat_map":
+        (async () => {
+          if (!isExpanded) { await activate(); await new Promise(r => setTimeout(r, 1200)); }
+          setLoadingMsg(`Loading map: ${payload || "The Colony, TX"}…`);
+          await initFlatMap(payload);
+        })();
+        break;
+      case "load_globe":
+        (async () => {
+          if (!isExpanded) { await activate(); await new Promise(r => setTimeout(r, 1200)); }
+          setLoadingMsg("Loading 3D globe…");
+          initGlobe(payload);
+        })();
+        break;
+      case "fly_to":
+        (async () => {
+          if (!isExpanded) { await activate(); await new Promise(r => setTimeout(r, 1200)); }
+          await flyToLocation(payload);
+        })();
+        break;
+      case "switch_map_style":
+        switchMapStyle(payload);
         break;
       case "load_image":
         if (isExpanded && payload) loadImage(payload.url, payload.label);
@@ -706,7 +1316,7 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
         break;
       default: break;
     }
-  }, [externalCommand, isExpanded, activate, deactivate, loadNasaModel, loadImage]);
+  }, [externalCommand, isExpanded, activate, deactivate, loadNasaModel, loadImage, initFlatMap, initGlobe, flyToLocation, switchMapStyle]);
 
   // ── Resize handler ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -839,11 +1449,11 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
           muted
         />
 
-        {/* Three.js canvas — transparent, composited on top */}
+        {/* Three.js canvas — transparent background, composited on top */}
         <canvas
           ref={threeCanvasRef}
           className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{ mixBlendMode: "screen" }}
+          style={{ mixBlendMode: "normal" }}
         />
 
         {/* Hand landmark overlay */}
@@ -910,6 +1520,16 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
             style={{ borderColor: `${ACCENT}60` }} />
         ))}
 
+        {/* Hidden Leaflet container for flat map texture capture */}
+        <div
+          ref={mapContainerRef}
+          style={{
+            position: "absolute", width: "512px", height: "512px",
+            top: "-9999px", left: "-9999px", zIndex: -1,
+            background: "#020617",
+          }}
+        />
+
         {/* Center crosshair */}
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
           <div className="w-6 h-px" style={{ background: `${ACCENT}40` }} />
@@ -924,11 +1544,46 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
         {/* Model library — quick access buttons */}
         <div className="flex items-center gap-2 overflow-x-auto flex-1">
           <span className="text-[9px] tracking-[0.2em] opacity-50 flex-shrink-0" style={{ color: ACCENT }}>LOAD:</span>
-          <button onClick={() => { sceneRef.current?.loadWireframe(); setCurrentModel(DEFAULT_MODEL); }}
+          <button onClick={() => { sceneRef.current?.loadWireframe(); setCurrentModel(DEFAULT_MODEL); setMapMode(null); }}
             className="px-2 py-0.5 text-[8px] tracking-[0.15em] flex-shrink-0 transition-all"
             style={{ border: `1px solid ${ACCENT}44`, color: `${ACCENT}88`, background: currentModel?.id === "wireframe" ? `${ACCENT}20` : "transparent" }}>
             CORE
           </button>
+
+          {/* Map buttons */}
+          <div className="flex-shrink-0 h-4 w-px opacity-20" style={{ background: ACCENT }} />
+          <button
+            onClick={() => initGlobe(mapStyle)}
+            className="px-2 py-0.5 text-[8px] tracking-[0.15em] flex-shrink-0 transition-all"
+            style={{ border: `1px solid ${mapMode === "globe" ? "#34D399" : "#34D39944"}`, color: mapMode === "globe" ? "#34D399" : "#34D39988", background: mapMode === "globe" ? "#34D39920" : "transparent" }}>
+            🌍 GLOBE
+          </button>
+          <button
+            onClick={() => initFlatMap(mapLocation)}
+            className="px-2 py-0.5 text-[8px] tracking-[0.15em] flex-shrink-0 transition-all"
+            style={{ border: `1px solid ${mapMode === "flat" ? "#34D399" : "#34D39944"}`, color: mapMode === "flat" ? "#34D399" : "#34D39988", background: mapMode === "flat" ? "#34D39920" : "transparent" }}>
+            🗺 MAP
+          </button>
+
+          {/* Style switcher — only shown in map mode */}
+          {mapMode && (
+            <>
+              <div className="flex-shrink-0 h-4 w-px opacity-20" style={{ background: ACCENT }} />
+              {["dark", "satellite", "street"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => switchMapStyle(s)}
+                  className="px-1.5 py-0.5 text-[7px] tracking-[0.1em] flex-shrink-0 transition-all capitalize"
+                  style={{
+                    border: `1px solid ${mapStyle === s ? ACCENT : `${ACCENT}33`}`,
+                    color: mapStyle === s ? ACCENT : `${ACCENT}66`,
+                    background: mapStyle === s ? `${ACCENT}15` : "transparent",
+                  }}>
+                  {s}
+                </button>
+              ))}
+            </>
+          )}
           {NASA_MODELS.map((model) => (
             <button
               key={model.id}
@@ -1013,6 +1668,14 @@ export function buildHoloCommand(toolName, input, findNasaModelFn) {
       return { action: "voice_manipulate", payload: input.action };
     case "load_holographic_image":
       return { action: "load_image", payload: { url: input.url, label: input.label } };
+    case "show_holographic_map": {
+      const mode = input.mode || "globe";
+      const style = input.style || "dark";
+      return {
+        action: mode === "globe" ? "load_map_globe" : "load_map_flat",
+        payload: { style },
+      };
+    }
     default:
       return null;
   }
