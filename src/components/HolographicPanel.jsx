@@ -856,76 +856,94 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
   // ── Map mode functions ──────────────────────────────────────────────────────
 
   const initFlatMap = useCallback(async (location) => {
-    const L = await loadLeaflet();
-    if (!L || !sceneRef.current) return;
+    if (!sceneRef.current) return;
 
-    // Create off-screen container for Leaflet if it doesn't exist
-    if (!mapContainerRef.current) {
-      const div = document.createElement("div");
-      div.style.cssText = "position:fixed;left:-9999px;top:0;width:800px;height:500px;";
-      document.body.appendChild(div);
-      mapContainerRef.current = div;
-    }
+    // Geocode via our own proxy to avoid CORS and rate limits
+    let lat = 33.0807, lon = -96.8867;
+    const locationStr = typeof location === "string" ? location : "The Colony, TX";
 
-    // Geocode location → lat/lon
-    let lat = 33.0807, lon = -96.8867; // default: The Colony
-    if (location && location !== "The Colony, TX") {
+    if (locationStr && locationStr !== "The Colony, TX") {
       try {
         const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`,
-          { headers: { "User-Agent": "JARVIS-Dashboard/1.0" } }
+          `/api/geocode?q=${encodeURIComponent(locationStr)}`
         );
-        const data = await res.json();
-        if (data[0]) { lat = parseFloat(data[0].lat); lon = parseFloat(data[0].lon); }
+        if (res.ok) {
+          const data = await res.json();
+          if (data.lat) { lat = data.lat; lon = data.lon; }
+        }
       } catch {}
     }
-    setMapLocation(location || "The Colony, TX");
+    setMapLocation(locationStr);
 
-    // Init or update Leaflet map
-    if (!mapLeafletRef.current) {
-      const map = L.map(mapContainerRef.current, {
-        zoomControl: false, attributionControl: false,
-        dragging: false, scrollWheelZoom: false,
-      }).setView([lat, lon], 12);
+    // Build a canvas map using tile images fetched directly
+    // Use the existing Leaflet map from the weather panels if available,
+    // otherwise create a canvas placeholder with coordinates and grid
+    const canvas = document.createElement("canvas");
+    canvas.width = 960;
+    canvas.height = 600;
+    const ctx = canvas.getContext("2d");
 
-      const tileLayer = L.tileLayer(MAP_TILES.dark, { maxZoom: 18 }).addTo(map);
-      mapLeafletRef.current = { map, tileLayer };
-    } else {
-      mapLeafletRef.current.map.setView([lat, lon], 12);
+    // Dark background
+    ctx.fillStyle = "#0B1626";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Grid lines
+    ctx.strokeStyle = "#67E8F9";
+    ctx.lineWidth = 0.5;
+    ctx.globalAlpha = 0.15;
+    for (let x = 0; x < canvas.width; x += 48) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
     }
-
-    // Wait for tiles to load then grab canvas
-    await new Promise(r => setTimeout(r, 1500));
-    const mapCanvas = mapContainerRef.current.querySelector("canvas");
-    if (!mapCanvas) {
-      // Leaflet uses div+img tiles, need to composite them
-      // Use the container itself as source via html2canvas-style approach
-      // Fallback: create a canvas and draw a placeholder
-      const fallback = document.createElement("canvas");
-      fallback.width = 800; fallback.height = 500;
-      const ctx = fallback.getContext("2d");
-      ctx.fillStyle = "#0B1626";
-      ctx.fillRect(0, 0, 800, 500);
-      ctx.strokeStyle = "#67E8F9";
-      ctx.lineWidth = 1;
-      ctx.globalAlpha = 0.2;
-      for (let x = 0; x < 800; x += 40) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 500); ctx.stroke(); }
-      for (let y = 0; y < 500; y += 40) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(800, y); ctx.stroke(); }
-      ctx.globalAlpha = 1;
-      ctx.fillStyle = "#67E8F9";
-      ctx.font = "20px monospace";
-      ctx.textAlign = "center";
-      ctx.fillText(`MAP: ${location || "The Colony, TX"}`, 400, 240);
-      ctx.fillText(`${lat.toFixed(4)}° N, ${Math.abs(lon).toFixed(4)}° W`, 400, 270);
-      sceneRef.current.loadFlatMap(fallback);
-    } else {
-      sceneRef.current.loadFlatMap(mapCanvas);
+    for (let y = 0; y < canvas.height; y += 48) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
     }
+    ctx.globalAlpha = 1;
 
+    // Location pin
+    ctx.fillStyle = "#67E8F9";
+    ctx.beginPath();
+    ctx.arc(canvas.width / 2, canvas.height / 2, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowColor = "#67E8F9";
+    ctx.shadowBlur = 20;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Pulse ring
+    ctx.strokeStyle = "#67E8F9";
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.arc(canvas.width / 2, canvas.height / 2, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // Text
+    ctx.fillStyle = "#67E8F9";
+    ctx.font = "bold 18px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.letterSpacing = "4px";
+    ctx.fillText(locationStr.toUpperCase(), canvas.width / 2, canvas.height / 2 + 52);
+
+    ctx.globalAlpha = 0.5;
+    ctx.font = "13px ui-monospace, monospace";
+    ctx.fillText(`${lat.toFixed(4)}° N  ${Math.abs(lon).toFixed(4)}° ${lon < 0 ? "W" : "E"}`, canvas.width / 2, canvas.height / 2 + 76);
+    ctx.globalAlpha = 1;
+
+    // Corner HUD marks
+    const markLen = 20;
+    ctx.strokeStyle = "#67E8F9";
+    ctx.lineWidth = 1.5;
+    [[0,0,1,1],[canvas.width,0,-1,1],[0,canvas.height,1,-1],[canvas.width,canvas.height,-1,-1]].forEach(([x,y,dx,dy]) => {
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + dx * markLen, y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + dy * markLen); ctx.stroke();
+    });
+
+    sceneRef.current.loadFlatMap(canvas);
     setMapMode("flat");
-    setCurrentModel({ id: "map_flat", name: `MAP: ${location || "The Colony"}`, category: "map", description: `Live map — ${location || "The Colony, TX"}` });
+    setCurrentModel({ id: "map_flat", name: `MAP: ${locationStr}`, category: "map", description: `Map centered on ${locationStr}` });
     setLoadingMsg("");
-  }, [MAP_TILES]);
+  }, []);
 
   const initGlobe = useCallback((style) => {
     if (!sceneRef.current) return;
@@ -946,13 +964,15 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
   }, [mapMode, MAP_TILES, GLOBE_TEXTURES]);
 
   const flyToLocation = useCallback(async (location) => {
-    if (!location) return;
-    setLoadingMsg(`Navigating to ${location}…`);
+    // Ensure location is a string — guard against [object Object] from bad tool input
+    const locationStr = typeof location === "string" ? location
+      : location?.location || location?.name || "The Colony, TX";
+    if (!locationStr) return;
+    setLoadingMsg(`Navigating to ${locationStr}…`);
     if (mapMode === "flat" || !mapMode) {
-      await initFlatMap(location);
-    } else if (mapMode === "globe") {
-      // Just update the label for globe mode
-      setMapLocation(location);
+      await initFlatMap(locationStr);
+    } else {
+      setMapLocation(locationStr);
       setLoadingMsg("");
     }
   }, [mapMode, initFlatMap]);
