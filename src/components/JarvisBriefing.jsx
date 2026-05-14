@@ -4,6 +4,7 @@ import CalendarPanel, { buildCalendarCommand } from "./CalendarPanel.jsx";
 import FlightPanel from "./FlightPanel.jsx";
 import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
 import SatellitePanel from "./SatellitePanel.jsx";
+import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
 
 // ============================================================
 // VISUALIZER
@@ -400,6 +401,15 @@ async function executeToolCall(name, input, ctx) {
 
     case "run_morning_briefing":
       return JSON.stringify({ status: "briefing not yet implemented" });
+
+    // ── Research / Browser ────────────────────────────────────────────────────
+    case "show_research_results":
+    case "display_webpage":
+    case "close_research": {
+      const cmd = buildResearchCommand(name, input);
+      if (cmd) ctx.setResearchCommand({ ...cmd, _ts: Date.now() });
+      return JSON.stringify({ ok: true, action: name });
+    }
 
     // ── Calendar ──────────────────────────────────────────────────────────
     case "open_calendar": {
@@ -859,6 +869,7 @@ export default function JarvisBriefing() {
   const [mode, setMode] = useState("idle");
   const [holoCommand, setHoloCommand] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [researchCommand, setResearchCommand] = useState(null);
   const [calendarCommand, setCalendarCommand] = useState(null);
   const [calendarEvents, setCalendarEvents] = useState([]);
   const [conversation, setConversation] = useState([]);
@@ -1157,6 +1168,8 @@ export default function JarvisBriefing() {
           </div>
 
           <ConversationPanel messages={conversation} highlighted={highlightedPanel === "transcript"} />
+
+          <ResearchPanel externalCommand={researchCommand} />
 
           <div className="grid grid-cols-2 gap-3">
             <VideoFeed network="CNN" code="VID.01" panelKey="cnn" highlighted={highlightedPanel === "cnn"} />
