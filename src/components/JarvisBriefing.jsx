@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import HolographicPanel, { buildHoloCommand } from "./HolographicPanel.jsx";
+import { findNasaModel } from "./nasaModels.js";
 import CalendarPanel, { buildCalendarCommand } from "./CalendarPanel.jsx";
 import FlightPanel from "./FlightPanel.jsx";
 import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
