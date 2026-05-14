@@ -251,6 +251,42 @@ const TOOLS = [
     input_schema: { type: "object", properties: {} },
   },
 
+  // ── Holographic Map ──────────────────────────────────────────────────────────
+  {
+    name: "show_holographic_map",
+    description: "Display a live interactive map in the holographic workspace. Opens the holographic panel and loads either a flat map or a 3D globe. Use when Ron asks to see a map, navigate somewhere, or view the globe.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["flat", "globe"], description: "flat = 2D map on 3D floating plane, globe = spinning 3D Earth. Default: flat." },
+        location: { type: "string", description: "Location to center the map on. Examples: 'Dallas TX', 'Tokyo', 'The Colony TX'. Only used for flat mode." },
+        style: { type: "string", enum: ["dark", "satellite", "street"], description: "Map tile style. Default: dark." },
+      },
+    },
+  },
+  {
+    name: "fly_to_location",
+    description: "Navigate the holographic map to a new location. Only works when the map is already displayed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        location: { type: "string", description: "Place name to navigate to. Examples: 'Times Square', 'Eiffel Tower', 'Dallas Fort Worth Airport'." },
+      },
+      required: ["location"],
+    },
+  },
+  {
+    name: "switch_map_style",
+    description: "Switch the holographic map tile style between dark, satellite, and street view.",
+    input_schema: {
+      type: "object",
+      properties: {
+        style: { type: "string", enum: ["dark", "satellite", "street"] },
+      },
+      required: ["style"],
+    },
+  },
+
   // ── Holographic Interface ─────────────────────────────────────────────────
   {
     name: "activate_holographic",
@@ -369,6 +405,21 @@ For "what's on my schedule" questions, call list_calendar_events and read the re
 
 Today's date for reference: always use the current date context when parsing relative dates like "tomorrow" or "next week."
 
+## HOLOGRAPHIC MAP
+
+The holographic panel supports an interactive map mode — a live Leaflet map displayed as a floating 3D plane, or a spinning 3D globe, both viewable with the webcam composite (Ron sees himself with the map floating in front of him).
+
+When Ron says things like:
+- "Show me a map" / "Open the map" → show_holographic_map with mode: flat
+- "Show me the globe" / "3D globe" → show_holographic_map with mode: globe
+- "Show me Dallas on the map" → show_holographic_map, location: "Dallas TX"
+- "Fly to Tokyo" / "Navigate to Paris" → fly_to_location
+- "Switch to satellite" / "Satellite view" → switch_map_style, style: satellite
+- "Street view" → switch_map_style, style: street
+- "Dark map" → switch_map_style, style: dark
+
+Always narrate naturally: "Opening the map now — centering on Dallas Fort Worth" or "Loading the globe — spin it with a pinch gesture."
+
 ## WEB SEARCH & RESEARCH
 
 You have native web search capability via the web_search tool. Use it freely whenever Ron asks about current events, news, prices, people, companies, or anything that benefits from fresh information.
@@ -428,6 +479,24 @@ When Ron asks about air traffic, call get_flight_info and highlight_panel("fligh
 Note: OpenSky provides ADS-B position data but not commercial schedule data (no gate info, delays, or passenger counts). Callsigns are ICAO format (AAL = American, DAL = Delta, UAL = United, SWA = Southwest).
 
 If OPENSKY_CLIENT_ID is not configured, the panel still works anonymously with lower rate limits.
+
+## HOLOGRAPHIC MAP
+
+The holographic interface supports two map modes projected over the webcam feed:
+
+**Globe mode** — a 3D spinning Earth sphere Ron can spin with his hands. Shows The Colony TX as a glowing cyan dot. Can fly to any location, highlighting it in amber.
+
+**Flat map mode** — a 2D Leaflet map rendered as a texture on a 3D floating plane. Rotatable and tiltable with hand gestures. Supports dark/satellite/street tile styles.
+
+When Ron asks to:
+- "Show me the map" / "Open the globe" → call activate_holographic then show_holographic_map
+- "Show me Dallas" / "Fly to Tokyo" / "Navigate to [place]" → show_holographic_map with location set
+- "Switch to satellite" / "Street view" / "Dark mode" → show_holographic_map with new style
+- "Switch to globe" / "Switch to flat map" → show_holographic_map with new mode
+
+Geocoding is handled automatically — just pass the location name as a string.
+
+Narrate naturally: "Pulling up the globe now" or "Flying to Tokyo — there it is, marked in amber."
 
 ## HOLOGRAPHIC INTERFACE
 
