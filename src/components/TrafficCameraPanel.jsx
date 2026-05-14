@@ -213,7 +213,7 @@ export default function TrafficCameraPanel({ highlighted }) {
           )}
 
           {!loading && cameras.length > 0 && (
-            <div className="grid grid-cols-2 gap-1.5" style={{ height: "180px" }}>
+            <div className="grid grid-cols-2 gap-1.5" style={{ height: "140px" }}>
               {cameras.slice(0, 4).map((cam) => (
                 <CameraCell key={cam.id} camera={cam} onClick={setExpanded} />
               ))}

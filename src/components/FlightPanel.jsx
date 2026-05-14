@@ -268,7 +268,7 @@ export default function FlightPanel({ highlighted }) {
       </div>
 
       {/* Map */}
-      <div className="relative" style={{ height: "220px" }}>
+      <div className="relative" style={{ height: "160px" }}>
         <div ref={mapRef} className="absolute inset-0" style={{ background: "#020617" }} />
 
         {/* Loading overlay */}

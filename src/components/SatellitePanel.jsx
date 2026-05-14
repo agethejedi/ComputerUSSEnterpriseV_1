@@ -286,7 +286,7 @@ export default function SatellitePanel({ highlighted }) {
       </div>
 
       {/* Map */}
-      <div className="relative" style={{ height: "200px" }}>
+      <div className="relative" style={{ height: "160px" }}>
         <div ref={mapRef} className="absolute inset-0" style={{ background: "#020617" }} />
 
         {loading && (
