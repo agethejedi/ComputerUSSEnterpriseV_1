@@ -207,6 +207,50 @@ const TOOLS = [
     },
   },
 
+  // ── Research / Browser ───────────────────────────────────────────────────────
+  {
+    name: "show_research_results",
+    description: "Display web search results in the JARVIS research panel. Call this after web_search returns results to show them visually on the dashboard. Pass the top 3-5 results with title, url, snippet, and source.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The search query that was run." },
+        results: {
+          type: "array",
+          description: "Top search results to display.",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              url: { type: "string" },
+              snippet: { type: "string" },
+              source: { type: "string", description: "Domain name e.g. 'reuters.com'" },
+            },
+          },
+        },
+      },
+      required: ["query", "results"],
+    },
+  },
+  {
+    name: "display_webpage",
+    description: "Display a webpage full-screen in the JARVIS browser panel. Use when Ron asks to see a page full screen, open a specific URL, or view a search result in the browser.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Full URL to display." },
+        title: { type: "string", description: "Display title for the panel header." },
+        mode: { type: "string", enum: ["fullscreen", "inline"], description: "fullscreen opens the browser panel, inline shows in research panel." },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "close_research",
+    description: "Close/dismiss the research panel. Use when Ron says 'close research', 'minimize', 'dismiss', or 'close that'.",
+    input_schema: { type: "object", properties: {} },
+  },
+
   // ── Holographic Interface ─────────────────────────────────────────────────
   {
     name: "activate_holographic",
@@ -325,6 +369,23 @@ For "what's on my schedule" questions, call list_calendar_events and read the re
 
 Today's date for reference: always use the current date context when parsing relative dates like "tomorrow" or "next week."
 
+## WEB SEARCH & RESEARCH
+
+You have native web search capability via the web_search tool. Use it freely whenever Ron asks about current events, news, prices, people, companies, or anything that benefits from fresh information.
+
+After searching, ALWAYS call show_research_results to display the top results visually in the dashboard panel alongside your verbal summary. Ron sees both the spoken summary and the visual results.
+
+When Ron says things like:
+- "Search for X" / "Look up X" / "What's the latest on X" → web_search then show_research_results
+- "Show me that full screen" / "Open that page" / "Go to [URL]" → display_webpage with mode: fullscreen
+- "Open the first result" → display_webpage with the first result's URL
+- "Summarize that" → web_search or fetch the URL, narrate the key points
+- "Close research" / "Minimize" / "Dismiss" → close_research
+
+For URL fetches, use web_search with the URL as the query, or describe what you found.
+
+Keep verbal summaries tight — 2-3 sentences max. The panel shows the details visually.
+
 ## SATELLITE TRACKER
 
 The dashboard has a live satellite tracking panel showing all satellites currently overhead, powered by N2YO API. Updates every 30 seconds. Satellites are color-coded: cyan=space stations, green=weather, amber=GPS/nav, rose=military, orange=Starlink, purple=amateur.
@@ -442,9 +503,13 @@ export async function onRequestPost(context) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 1024,
+        max_tokens: 2048,
         system: SYSTEM_PROMPT,
-        tools: TOOLS,
+        tools: [
+          // Native Anthropic web search — no API key needed
+          { type: "web_search_20250305", name: "web_search" },
+          ...TOOLS,
+        ],
         messages,
       }),
     });
