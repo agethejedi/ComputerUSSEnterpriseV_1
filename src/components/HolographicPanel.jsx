@@ -591,62 +591,6 @@ class HoloScene {
 
   // ── MAP MODE ─────────────────────────────────────────────────────────────
 
-  // Load flat map — renders Leaflet map onto an off-screen canvas, uses as texture
-  loadFlatMap(leafletMap, style = "dark") {
-    const THREE = this.THREE;
-    this.clearCurrentObject();
-    this.mapMode = "flat";
-    this.autoRotate = false;
-
-    // Create a canvas texture from the Leaflet map
-    const mapCanvas = leafletMap.getContainer().querySelector("canvas") ||
-                      leafletMap.getContainer();
-
-    // Use CanvasTexture — updates live as map renders
-    const texture = new THREE.CanvasTexture(leafletMap.getContainer());
-    texture.needsUpdate = true;
-
-    const aspect = this.width / this.height;
-    const geo = new THREE.PlaneGeometry(3.5, 3.5 / aspect);
-    const mat = new THREE.MeshBasicMaterial({
-      map: texture,
-      side: THREE.DoubleSide,
-    });
-    const plane = new THREE.Mesh(geo, mat);
-
-    // HUD frame border
-    const edgesGeo = new THREE.EdgesGeometry(geo);
-    const edgesMat = new THREE.LineBasicMaterial({ color: 0x67E8F9, linewidth: 2 });
-    const frame = new THREE.LineSegments(edgesGeo, edgesMat);
-    plane.add(frame);
-
-    // Corner bracket accents
-    const bracketColor = 0x67E8F9;
-    [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(([sx, sy]) => {
-      const bGeo = new THREE.BufferGeometry();
-      const s = 0.2;
-      const hw = (3.5 / 2) * 0.98;
-      const hh = (3.5 / aspect / 2) * 0.98;
-      const verts = new Float32Array([
-        sx * hw, sy * (hh - s * sy < 0 ? hh - s : hh + s), 0,
-        sx * hw, sy * hh, 0,
-        sx * (hw - s), sy * hh, 0,
-      ]);
-      bGeo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
-      const bMat = new THREE.LineBasicMaterial({ color: bracketColor });
-      const bracket = new THREE.Line(bGeo, bMat);
-      plane.add(bracket);
-    });
-
-    this.pivot.add(plane);
-    this.currentObject = plane;
-    this.mapTexture = texture;
-
-    // Start texture update loop
-    this._startMapTextureUpdate();
-    return plane;
-  }
-
   // Load globe mode — sphere with equirectangular map texture
   loadGlobe(style = "dark") {
     const THREE = this.THREE;
@@ -1200,7 +1144,7 @@ export default function HolographicPanel({ onVoiceCommand, externalCommand }) {
     // Wait for tiles to load before capturing as texture
     setTimeout(() => {
       map.invalidateSize();
-      sceneRef.current?.loadFlatMap(map, style);
+      sceneRef.current?.loadWireframe(); // map mode handled by initFlatMap
       setCurrentModel({ id: "map_flat", name: "Holographic Map", category: "map", description: "Live map — drag to pan, pinch to rotate." });
       setLoadingMsg("");
     }, 1500);
