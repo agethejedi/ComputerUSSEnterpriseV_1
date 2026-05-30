@@ -6,6 +6,7 @@ import FlightPanel from "./FlightPanel.jsx";
 import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
 import SatellitePanel from "./SatellitePanel.jsx";
 import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
+import { useElevenLabsSpeak, useWakeWord, useJarvisIntro, IntroOverlay } from "./VoiceAndIntro.jsx";
 
 // ============================================================
 // VISUALIZER
@@ -429,7 +430,6 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify({ ok: true, action: name });
     }
     case "list_calendar_events": {
-      // Return events from state for Claude to read
       const startDate = input.startDate || new Date().toISOString().slice(0, 10);
       const endDate = input.endDate || (() => {
         const d = new Date(startDate);
@@ -451,7 +451,6 @@ async function executeToolCall(name, input, ctx) {
       if (cmd && ctx.setHoloCommand) {
         ctx.setHoloCommand({ ...cmd, _ts: Date.now() });
       }
-      // If map with location, kick off geocode
       if (name === "show_holographic_map" && input.location) {
         fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(input.location)}&limit=1`)
           .then(r => r.json())
@@ -598,7 +597,7 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
   useEffect(() => {
     if (!mapReady) return;
     let cancelled = false;
-    let activeFadeIn = null; // track active fade interval so we can kill it on cleanup
+    let activeFadeIn = null;
 
     const start = async () => {
       try {
@@ -607,12 +606,9 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
         const data = await resp.json();
         if (cancelled) return;
         apiHostRef.current = data.host;
-        // Only use "past" frames — nowcast tiles require many more requests
-        // and don't add much visual value for a dashboard background map
         const past = data.radar?.past || [];
         framesRef.current = past;
         if (!framesRef.current.length) return;
-        // Start at the most recent frame
         animPosRef.current = past.length - 1;
 
         const tick = () => {
@@ -627,7 +623,6 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
           const layer = L.tileLayer(tileUrl, { tileSize: 256, opacity: 0.0, zIndex: 100 }).addTo(map);
 
           let opacity = 0;
-          // Clear any previous fade before starting a new one
           if (activeFadeIn) clearInterval(activeFadeIn);
           activeFadeIn = setInterval(() => {
             if (cancelled) { clearInterval(activeFadeIn); return; }
@@ -636,7 +631,6 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
               opacity = 0.7;
               clearInterval(activeFadeIn);
               activeFadeIn = null;
-              // Keep only the current layer, remove old ones
               while (radarLayersRef.current.length > 1) {
                 const old = radarLayersRef.current.shift();
                 if (old && mapInstanceRef.current) mapInstanceRef.current.removeLayer(old);
@@ -648,14 +642,10 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
           radarLayersRef.current.push(layer);
 
           const date = new Date(frame.time * 1000);
-          const ctTime = date.toLocaleTimeString("en-US", {
-            timeZone: "America/Chicago", hour: "numeric", minute: "2-digit",
-          });
+          const ctTime = date.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
           setTimestamp(`${ctTime} CT`);
 
-          // Advance to next frame, loop back to start
           animPosRef.current = (animPosRef.current + 1) % frames.length;
-          // 2000ms per frame — smooth enough, dramatically fewer requests
           animTimerRef.current = setTimeout(tick, 2000);
         };
 
@@ -669,9 +659,7 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
       if (activeFadeIn) clearInterval(activeFadeIn);
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
       if (mapInstanceRef.current) {
-        radarLayersRef.current.forEach((layer) => {
-          try { mapInstanceRef.current.removeLayer(layer); } catch {}
-        });
+        radarLayersRef.current.forEach((layer) => { try { mapInstanceRef.current.removeLayer(layer); } catch {} });
         radarLayersRef.current = [];
       }
     };
@@ -766,7 +754,6 @@ function WatchlistPanel({ highlighted, watchlists, activeWatchlistName, marketDa
         <WatchlistChips watchlists={watchlists} active={activeWatchlistName} onSelect={onSwitchList} accent={accent} />
         <StatusPill session={session} />
       </div>
-      {/* Scrollable rows, max 5 */}
       <div className="overflow-y-auto" style={{ maxHeight: "210px" }}>
         {rows.length === 0 ? (
           <div className="text-[10px] opacity-40 italic py-4 text-center" style={{ color: accent }}>No symbols. Ask JARVIS to add some.</div>
@@ -896,6 +883,9 @@ export default function JarvisBriefing() {
   const [voiceError, setVoiceError] = useState(null);
   const [interimTranscript, setInterimTranscript] = useState("");
 
+  // ── NEW: intro overlay state ───────────────────────────────────────────────
+  const [introSong, setIntroSong] = useState(null);
+
   // Watchlists
   const [watchlists, setWatchlists] = useState(DEFAULT_WATCHLISTS);
   const [activeWatchlistName, setActiveWatchlistName] = useState("DEFAULT");
@@ -997,13 +987,6 @@ export default function JarvisBriefing() {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.getVoices();
-      window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
-    }
-  }, []);
-
   const updateWatchlists = useCallback((updated) => { setWatchlists(updated); lsSave(updated); }, []);
   const refreshActiveWatchlist = useCallback((symbols) => { fetchActiveMarketData(symbols); }, [fetchActiveMarketData]);
 
@@ -1013,19 +996,16 @@ export default function JarvisBriefing() {
     fetchActiveMarketData(watchlistsRef.current[name] || []);
   }, [fetchActiveMarketData]);
 
-  const speak = useCallback((text) => {
-    return new Promise((resolve) => {
-      if (typeof window === "undefined" || !window.speechSynthesis || !text) { resolve(); return; }
-      window.speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = 0.98; u.pitch = 0.85;
-      const voices = window.speechSynthesis.getVoices();
-      const preferred = voices.find((v) => /daniel|alex|google uk english male|microsoft david|microsoft george/i.test(v.name)) || voices.find((v) => v.lang?.startsWith("en"));
-      if (preferred) u.voice = preferred;
-      u.onend = () => resolve(); u.onerror = () => resolve();
-      window.speechSynthesis.speak(u);
-    });
-  }, []);
+  // ── NEW: ElevenLabs TTS (replaces old speak function) ─────────────────────
+  const { speak, stopSpeaking, unlockSpeech } = useElevenLabsSpeak();
+
+  // ── NEW: Daily intro music + boot overlay ──────────────────────────────────
+  const { introState, skipIntro } = useJarvisIntro({
+    onComplete: () => {
+      setTimeout(() => speak("Good morning. All systems online. How can I assist you today?"), 500);
+    },
+    onSongInfo: (song) => setIntroSong(song),
+  });
 
   const sendToClaude = useCallback(async (userMessage) => {
     setMode("thinking");
@@ -1087,6 +1067,8 @@ export default function JarvisBriefing() {
 
   const startListening = useCallback(() => {
     if (isListeningRef.current) return;
+    // ── NEW: unlock audio context inside gesture handler ───────────────────
+    unlockSpeech();
     setVoiceError(null);
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setVoiceError("Speech recognition not supported. Use Chrome, Edge, or Safari."); return; }
@@ -1108,9 +1090,18 @@ export default function JarvisBriefing() {
       if (text) { setConversation((c) => [...c, { role: "user", display: text }]); sendToClaude(text); } else setMode("idle");
     };
     recognitionRef.current = recognition; isListeningRef.current = true; setMode("listening"); recognition.start();
-  }, [sendToClaude]);
+  }, [sendToClaude, unlockSpeech]);
 
   const stopListening = useCallback(() => { if (recognitionRef.current && isListeningRef.current) recognitionRef.current.stop(); }, []);
+
+  // ── NEW: Wake word — listens for "hey jarvis" when idle ───────────────────
+  useWakeWord({
+    onWakeWord: () => {
+      unlockSpeech();
+      startListening();
+    },
+    enabled: mode === "idle",
+  });
 
   useEffect(() => {
     const onKeyDown = (e) => { const tag = document.activeElement?.tagName; if (e.code === "Space" && !e.repeat && tag !== "INPUT" && tag !== "TEXTAREA") { e.preventDefault(); if (mode === "idle") startListening(); } };
@@ -1119,7 +1110,11 @@ export default function JarvisBriefing() {
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
   }, [mode, startListening, stopListening]);
 
-  const handleMicClick = () => { if (mode === "idle") startListening(); else if (mode === "listening") stopListening(); };
+  // ── NEW: unlock speech on mic button tap too ──────────────────────────────
+  const handleMicClick = () => {
+    unlockSpeech();
+    if (mode === "idle") startListening(); else if (mode === "listening") stopListening();
+  };
 
   const timeStr = now.toLocaleTimeString("en-US", { hour12: false });
   const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).toUpperCase();
@@ -1127,6 +1122,10 @@ export default function JarvisBriefing() {
 
   return (
     <div className="min-h-screen w-full text-slate-200 font-mono relative overflow-hidden" style={{ background: "radial-gradient(ellipse at center, #0B1626 0%, #060B14 60%, #03070D 100%)" }}>
+
+      {/* ── NEW: Daily intro overlay ──────────────────────────────────────── */}
+      <IntroOverlay introState={introState} songInfo={introSong} onSkip={skipIntro} />
+
       <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: `linear-gradient(rgba(125,211,252,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(125,211,252,0.05) 1px,transparent 1px)`, backgroundSize: "32px 32px", maskImage: "radial-gradient(ellipse at center,black 30%,transparent 95%)", WebkitMaskImage: "radial-gradient(ellipse at center,black 30%,transparent 95%)" }} />
       <div className="absolute inset-0 pointer-events-none opacity-[0.04] mix-blend-overlay" style={{ backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence baseFrequency='0.9'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>")` }} />
 
@@ -1143,7 +1142,7 @@ export default function JarvisBriefing() {
       <div className="relative z-10 flex items-center justify-between px-6 py-3 border-b" style={{ borderColor: "#7DD3FC22" }}>
         <div className="flex items-center gap-4">
           <span className="text-[10px] tracking-[0.3em]" style={{ color: "#7DD3FC" }}>● JARVIS // INTERACTIVE</span>
-          <span className="text-[10px] tracking-[0.2em] opacity-50">v2.1.0</span>
+          <span className="text-[10px] tracking-[0.2em] opacity-50">v2.8.0</span>
         </div>
         <div className="flex items-center gap-6 text-[10px] tracking-[0.25em]">
           <span className="opacity-60">{dateStr}</span>
@@ -1187,7 +1186,6 @@ export default function JarvisBriefing() {
           </div>
 
           <ConversationPanel messages={conversation} highlighted={highlightedPanel === "transcript"} />
-
           <ResearchPanel externalCommand={researchCommand} />
 
           <div className="grid grid-cols-2 gap-3">
@@ -1197,9 +1195,7 @@ export default function JarvisBriefing() {
         </div>
 
         <div className="col-span-12 lg:col-span-3 space-y-3">
-          <HolographicPanel
-            externalCommand={holoCommand}
-          />
+          <HolographicPanel externalCommand={holoCommand} />
           <WatchlistPanel
             highlighted={highlightedPanel === "watchlist"}
             watchlists={watchlists}
@@ -1221,7 +1217,6 @@ export default function JarvisBriefing() {
         </div>
       </div>
 
-      {/* Calendar Panel */}
       <CalendarPanel
         isOpen={calendarOpen}
         onClose={() => setCalendarOpen(false)}
@@ -1234,6 +1229,6 @@ export default function JarvisBriefing() {
         <span>SONNET 4.6 · ENG-US</span>
       </div>
 
-          </div>
+    </div>
   );
 }
