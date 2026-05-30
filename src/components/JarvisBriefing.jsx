@@ -6,11 +6,7 @@ import FlightPanel from "./FlightPanel.jsx";
 import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
 import SatellitePanel from "./SatellitePanel.jsx";
 import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
-import { useElevenLabsSpeak, useWakeWord, useJarvisIntro, IntroOverlay } from "./VoiceAndIntro.jsx";
-
-// ============================================================
-// VISUALIZER
-// ============================================================
+import { useElevenLabsSpeak, useWakeWord, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
 
 const MODE_LABELS = {
   idle: "STANDBY",
@@ -28,7 +24,6 @@ function AudioRing({ active, intensity = 1, bars = 64, color = "#7DD3FC" }) {
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
   }, [active]);
-
   const radius = 110;
   const items = [];
   for (let i = 0; i < bars; i++) {
@@ -147,10 +142,6 @@ function JarvisCore({ mode }) {
   );
 }
 
-// ============================================================
-// PANEL CHROME
-// ============================================================
-
 function Panel({ title, code, children, accent = "#7DD3FC", highlighted = false, panelKey }) {
   const glowColor = highlighted ? "#FBBF24" : accent;
   return (
@@ -171,10 +162,6 @@ function Panel({ title, code, children, accent = "#7DD3FC", highlighted = false,
     </div>
   );
 }
-
-// ============================================================
-// CONSTANTS & DEFAULTS
-// ============================================================
 
 const DEFAULT_WATCHLISTS = { DEFAULT: ["AAPL", "NVDA", "MSFT"] };
 
@@ -210,9 +197,7 @@ const FALLBACK_COMMODITIES = [
   { id: "SI", name: "SILVER",    unit: "USD/SHARE (SLV)",  val: null, chg: null, pct: null },
 ];
 
-function blankEntry(sym) {
-  return { id: sym, name: sym, symbol: sym, val: null, chg: null, pct: null };
-}
+function blankEntry(sym) { return { id: sym, name: sym, symbol: sym, val: null, chg: null, pct: null }; }
 
 function getMarketSession(now = new Date()) {
   const ctString = now.toLocaleString("en-US", { timeZone: "America/Chicago", hour12: false });
@@ -227,7 +212,6 @@ function getMarketSession(now = new Date()) {
   return "afterhours";
 }
 
-// localStorage helpers
 const LS_KEY = "jarvis_watchlists";
 const LS_ACTIVE_KEY = "jarvis_active_watchlist";
 function lsLoad() { try { const r = localStorage.getItem(LS_KEY); return r ? JSON.parse(r) : null; } catch { return null; } }
@@ -235,32 +219,21 @@ function lsSave(w) { try { localStorage.setItem(LS_KEY, JSON.stringify(w)); } ca
 function lsLoadActive() { try { return localStorage.getItem(LS_ACTIVE_KEY) || "DEFAULT"; } catch { return "DEFAULT"; } }
 function lsSaveActive(n) { try { localStorage.setItem(LS_ACTIVE_KEY, n); } catch {} }
 
-// ============================================================
-// API HELPERS
-// ============================================================
-
 async function apiGetWatchlists() {
   const res = await fetch("/api/watchlists");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
-
 async function apiSaveWatchlist(name, symbols) {
-  const res = await fetch("/api/watchlists", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, symbols }),
-  });
+  const res = await fetch("/api/watchlists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, symbols }) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
-
 async function apiDeleteWatchlist(name) {
   const res = await fetch(`/api/watchlists?name=${encodeURIComponent(name)}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
-
 async function fetchMarketForSymbols(symbols) {
   if (!symbols || !symbols.length) return [];
   const res = await fetch(`/api/market?symbols=${symbols.join(",")}`);
@@ -269,32 +242,17 @@ async function fetchMarketForSymbols(symbols) {
   return data.watchlist || [];
 }
 
-// ============================================================
-// TOOL EXECUTOR
-// ============================================================
-
 async function executeToolCall(name, input, ctx) {
-  const {
-    weatherData, marketData, commodities, marketSession,
-    watchlists, activeWatchlistName,
-    setHighlightedPanel, setActiveWatchlistName,
-    updateWatchlists, refreshActiveWatchlist,
-  } = ctx;
+  const { weatherData, marketData, commodities, marketSession, watchlists, activeWatchlistName, setHighlightedPanel, setActiveWatchlistName, updateWatchlists, refreshActiveWatchlist, musicController } = ctx;
 
   switch (name) {
-
     case "get_weather": {
       const scope = input.scope || "local";
       const wx = weatherData || FALLBACK_WEATHER;
       if (scope === "national") return JSON.stringify({ fetchedAt: wx.fetchedAt, cities: wx.national.cities });
       const c = wx.local.current;
-      return JSON.stringify({
-        fetchedAt: wx.fetchedAt, location: wx.local.location,
-        current: c ? { tempF: c.tempF, feelsF: c.feelsF, humidity: c.humidity, windDir: c.windDir, windSpeedMph: c.windSpeed, barometricInHg: c.baroIn, conditions: c.conditions, observedAt: c.observedAt } : null,
-        forecastTiles: wx.local.forecastTiles, alerts: wx.local.alerts,
-      });
+      return JSON.stringify({ fetchedAt: wx.fetchedAt, location: wx.local.location, current: c ? { tempF: c.tempF, feelsF: c.feelsF, humidity: c.humidity, windDir: c.windDir, windSpeedMph: c.windSpeed, barometricInHg: c.baroIn, conditions: c.conditions, observedAt: c.observedAt } : null, forecastTiles: wx.local.forecastTiles, alerts: wx.local.alerts });
     }
-
     case "get_market_data": {
       const symbols = (input.symbols || []).map((s) => s.toLowerCase());
       const wantsAll = symbols.includes("all");
@@ -302,28 +260,22 @@ async function executeToolCall(name, input, ctx) {
       const session = marketSession;
       const sessionNote = { open: "Live quotes.", afterhours: "Most recent regular-session close.", closed: "Friday's close." }[session] || "";
       if (wantsAll) return JSON.stringify({ session, sessionNote, listName: activeWatchlistName, watchlist: marketData || [], commodities: comm });
-      const allStocks = marketData || [];
-      const matches = allStocks.filter((item) => symbols.some((s) => item.symbol?.toLowerCase() === s || item.name?.toLowerCase().includes(s)));
+      const matches = (marketData || []).filter((item) => symbols.some((s) => item.symbol?.toLowerCase() === s || item.name?.toLowerCase().includes(s)));
       const commMatches = comm.filter((c) => symbols.some((s) => c.id?.toLowerCase() === s || c.name?.toLowerCase().includes(s)));
       return JSON.stringify({ session, sessionNote, data: [...matches, ...commMatches] });
     }
-
     case "list_watchlists":
       return JSON.stringify({ watchlists: watchlists || DEFAULT_WATCHLISTS, active: activeWatchlistName || "DEFAULT", symbolCap: 5 });
-
     case "create_watchlist": {
-      const { name, symbols } = input;
-      const cleanName = name.toUpperCase().trim().slice(0, 32);
-      const cleanSymbols = [...new Set((symbols || []).map((s) => s.toUpperCase().trim()))].slice(0, 5);
+      const cleanName = input.name.toUpperCase().trim().slice(0, 32);
+      const cleanSymbols = [...new Set((input.symbols || []).map((s) => s.toUpperCase().trim()))].slice(0, 5);
       const updated = { ...(watchlists || DEFAULT_WATCHLISTS), [cleanName]: cleanSymbols };
       updateWatchlists(updated);
       try { await apiSaveWatchlist(cleanName, cleanSymbols); } catch { lsSave(updated); return JSON.stringify({ ok: true, name: cleanName, symbols: cleanSymbols, source: "localStorage" }); }
       return JSON.stringify({ ok: true, name: cleanName, symbols: cleanSymbols });
     }
-
     case "delete_watchlist": {
-      const { name } = input;
-      const cleanName = name.toUpperCase().trim();
+      const cleanName = input.name.toUpperCase().trim();
       if (cleanName === "DEFAULT") return JSON.stringify({ error: "Cannot delete DEFAULT watchlist" });
       const current = { ...(watchlists || DEFAULT_WATCHLISTS) };
       delete current[cleanName];
@@ -332,14 +284,12 @@ async function executeToolCall(name, input, ctx) {
       try { await apiDeleteWatchlist(cleanName); } catch { lsSave(current); return JSON.stringify({ ok: true, deleted: cleanName, source: "localStorage" }); }
       return JSON.stringify({ ok: true, deleted: cleanName });
     }
-
     case "add_to_watchlist": {
-      const { listName, symbols } = input;
-      const cleanName = (listName || "DEFAULT").toUpperCase().trim();
+      const cleanName = (input.listName || "DEFAULT").toUpperCase().trim();
       const wl = { ...(watchlists || DEFAULT_WATCHLISTS) };
       const existing = wl[cleanName] || [];
       if (existing.length >= 5) return JSON.stringify({ error: `${cleanName} is at the 5-symbol cap. Remove a symbol first.`, current: existing });
-      const toAdd = (symbols || []).map((s) => s.toUpperCase().trim()).filter(Boolean);
+      const toAdd = (input.symbols || []).map((s) => s.toUpperCase().trim()).filter(Boolean);
       const merged = [...new Set([...existing, ...toAdd])].slice(0, 5);
       wl[cleanName] = merged;
       updateWatchlists(wl);
@@ -347,13 +297,11 @@ async function executeToolCall(name, input, ctx) {
       if (cleanName === activeWatchlistName) refreshActiveWatchlist(merged);
       return JSON.stringify({ ok: true, listName: cleanName, symbols: merged, added: toAdd });
     }
-
     case "remove_from_watchlist": {
-      const { listName, symbols } = input;
-      const cleanName = (listName || "DEFAULT").toUpperCase().trim();
+      const cleanName = (input.listName || "DEFAULT").toUpperCase().trim();
       const wl = { ...(watchlists || DEFAULT_WATCHLISTS) };
       const existing = wl[cleanName] || [];
-      const toRemove = new Set((symbols || []).map((s) => s.toUpperCase().trim()));
+      const toRemove = new Set((input.symbols || []).map((s) => s.toUpperCase().trim()));
       const updated = existing.filter((s) => !toRemove.has(s));
       wl[cleanName] = updated;
       updateWatchlists(wl);
@@ -361,30 +309,20 @@ async function executeToolCall(name, input, ctx) {
       if (cleanName === activeWatchlistName) refreshActiveWatchlist(updated);
       return JSON.stringify({ ok: true, listName: cleanName, symbols: updated, removed: [...toRemove] });
     }
-
     case "set_active_watchlist": {
-      const { name } = input;
-      const cleanName = name.toUpperCase().trim();
+      const cleanName = input.name.toUpperCase().trim();
       const wl = watchlists || DEFAULT_WATCHLISTS;
       if (!wl[cleanName]) return JSON.stringify({ error: `No watchlist named ${cleanName}`, available: Object.keys(wl) });
-      setActiveWatchlistName(cleanName);
-      lsSaveActive(cleanName);
-      refreshActiveWatchlist(wl[cleanName]);
-      setHighlightedPanel("watchlist");
-      setTimeout(() => setHighlightedPanel(null), 8000);
+      setActiveWatchlistName(cleanName); lsSaveActive(cleanName); refreshActiveWatchlist(wl[cleanName]);
+      setHighlightedPanel("watchlist"); setTimeout(() => setHighlightedPanel(null), 8000);
       return JSON.stringify({ ok: true, active: cleanName });
     }
-
     case "compare_watchlists": {
-      const { nameA, nameB } = input;
       const wl = watchlists || DEFAULT_WATCHLISTS;
-      const symA = wl[nameA.toUpperCase()] || [];
-      const symB = wl[nameB.toUpperCase()] || [];
+      const symA = wl[input.nameA.toUpperCase()] || [];
+      const symB = wl[input.nameB.toUpperCase()] || [];
       if (!symA.length || !symB.length) return JSON.stringify({ error: "One or both watchlists are empty or not found" });
-      const [dataA, dataB] = await Promise.all([
-        fetchMarketForSymbols(symA).catch(() => symA.map(blankEntry)),
-        fetchMarketForSymbols(symB).catch(() => symB.map(blankEntry)),
-      ]);
+      const [dataA, dataB] = await Promise.all([fetchMarketForSymbols(symA).catch(() => symA.map(blankEntry)), fetchMarketForSymbols(symB).catch(() => symB.map(blankEntry))]);
       const summarize = (data, name) => {
         const valid = data.filter((d) => d.pct != null);
         if (!valid.length) return { name, avgPct: null, best: null, worst: null };
@@ -393,18 +331,13 @@ async function executeToolCall(name, input, ctx) {
         const worst = valid.reduce((a, b) => (b.pct < a.pct ? b : a));
         return { name, avgPct: +avgPct.toFixed(2), best: { symbol: best.symbol, pct: +best.pct.toFixed(2) }, worst: { symbol: worst.symbol, pct: +worst.pct.toFixed(2) } };
       };
-      return JSON.stringify({ session: marketSession, listA: summarize(dataA, nameA.toUpperCase()), listB: summarize(dataB, nameB.toUpperCase()), detail: { [nameA.toUpperCase()]: dataA, [nameB.toUpperCase()]: dataB } });
+      return JSON.stringify({ session: marketSession, listA: summarize(dataA, input.nameA.toUpperCase()), listB: summarize(dataB, input.nameB.toUpperCase()), detail: { [input.nameA.toUpperCase()]: dataA, [input.nameB.toUpperCase()]: dataB } });
     }
-
     case "highlight_panel":
-      setHighlightedPanel(input.panel);
-      setTimeout(() => setHighlightedPanel(null), 8000);
+      setHighlightedPanel(input.panel); setTimeout(() => setHighlightedPanel(null), 8000);
       return JSON.stringify({ highlighted: input.panel });
-
     case "run_morning_briefing":
       return JSON.stringify({ status: "briefing not yet implemented" });
-
-    // ── Research / Browser ────────────────────────────────────────────────────
     case "show_research_results":
     case "display_webpage":
     case "close_research": {
@@ -412,8 +345,6 @@ async function executeToolCall(name, input, ctx) {
       if (cmd) ctx.setResearchCommand({ ...cmd, _ts: Date.now() });
       return JSON.stringify({ ok: true, action: name });
     }
-
-    // ── Calendar ──────────────────────────────────────────────────────────
     case "open_calendar": {
       ctx.setCalendarOpen(true);
       const cmd = buildCalendarCommand(name, input);
@@ -431,16 +362,10 @@ async function executeToolCall(name, input, ctx) {
     }
     case "list_calendar_events": {
       const startDate = input.startDate || new Date().toISOString().slice(0, 10);
-      const endDate = input.endDate || (() => {
-        const d = new Date(startDate);
-        d.setDate(d.getDate() + 7);
-        return d.toISOString().slice(0, 10);
-      })();
+      const endDate = input.endDate || (() => { const d = new Date(startDate); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); })();
       const evts = (ctx.calendarEvents || []).filter((e) => e.date >= startDate && e.date <= endDate);
       return JSON.stringify({ events: evts, startDate, endDate, count: evts.length });
     }
-
-    // ── Holographic interface ──────────────────────────────────────────────
     case "activate_holographic":
     case "deactivate_holographic":
     case "load_holographic_model":
@@ -448,35 +373,74 @@ async function executeToolCall(name, input, ctx) {
     case "load_holographic_image":
     case "show_holographic_map": {
       const cmd = buildHoloCommand(name, input, findNasaModel);
-      if (cmd && ctx.setHoloCommand) {
-        ctx.setHoloCommand({ ...cmd, _ts: Date.now() });
-      }
+      if (cmd && ctx.setHoloCommand) ctx.setHoloCommand({ ...cmd, _ts: Date.now() });
       if (name === "show_holographic_map" && input.location) {
         fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(input.location)}&limit=1`)
-          .then(r => r.json())
-          .then(results => {
+          .then(r => r.json()).then(results => {
             if (results?.[0]) {
               const { lat, lon, display_name } = results[0];
-              ctx.setHoloCommand({
-                action: "fly_to",
-                payload: { lat: parseFloat(lat), lon: parseFloat(lon), label: display_name.split(",")[0], zoom: input.zoom || 10 },
-                _ts: Date.now() + 2000,
-              });
+              ctx.setHoloCommand({ action: "fly_to", payload: { lat: parseFloat(lat), lon: parseFloat(lon), label: display_name.split(",")[0], zoom: input.zoom || 10 }, _ts: Date.now() + 2000 });
             }
-          })
-          .catch(() => {});
+          }).catch(() => {});
       }
       return JSON.stringify({ ok: true, action: name });
+    }
+    // ── Apple Music ───────────────────────────────────────────────────────────
+    case "music_play_song": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.playSong(input.query);
+      return JSON.stringify(result);
+    }
+    case "music_play_artist": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.playArtist(input.artist);
+      return JSON.stringify(result);
+    }
+    case "music_play_album": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.playAlbum(input.album);
+      return JSON.stringify(result);
+    }
+    case "music_pause": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.pause();
+      return JSON.stringify(result);
+    }
+    case "music_resume": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.resume();
+      return JSON.stringify(result);
+    }
+    case "music_skip": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.skip();
+      return JSON.stringify(result);
+    }
+    case "music_previous": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.previous();
+      return JSON.stringify(result);
+    }
+    case "music_volume": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.setVolume(input.level ?? 50);
+      return JSON.stringify(result);
+    }
+    case "music_stop": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = await musicController.stop();
+      return JSON.stringify(result);
+    }
+    case "music_now_playing": {
+      if (!musicController) return JSON.stringify({ error: "Music controller not available." });
+      const result = musicController.nowPlaying();
+      return JSON.stringify(result);
     }
 
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
 }
-
-// ============================================================
-// PANELS
-// ============================================================
 
 function LocalWeather({ highlighted, weather, loading, error }) {
   const accent = "#7DD3FC";
@@ -523,71 +487,49 @@ function loadLeaflet() {
   leafletLoadPromise = new Promise((resolve, reject) => {
     if (!document.querySelector("link[data-leaflet]")) {
       const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      link.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
-      link.crossOrigin = "";
-      link.setAttribute("data-leaflet", "");
-      document.head.appendChild(link);
+      link.rel = "stylesheet"; link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      link.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="; link.crossOrigin = "";
+      link.setAttribute("data-leaflet", ""); document.head.appendChild(link);
     }
     const script = document.createElement("script");
     script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    script.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
-    script.crossOrigin = "";
-    script.onload = () => resolve(window.L);
-    script.onerror = (e) => reject(e);
+    script.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="; script.crossOrigin = "";
+    script.onload = () => resolve(window.L); script.onerror = (e) => reject(e);
     document.head.appendChild(script);
   });
   return leafletLoadPromise;
 }
 
 function RadarMap({ center, zoom, markers, className, showLabels = true, accent = "#7DD3FC" }) {
-  const mapRef = useRef(null);
-  const mapInstanceRef = useRef(null);
-  const radarLayersRef = useRef([]);
-  const animTimerRef = useRef(null);
-  const animPosRef = useRef(0);
-  const framesRef = useRef([]);
+  const mapRef = useRef(null); const mapInstanceRef = useRef(null);
+  const radarLayersRef = useRef([]); const animTimerRef = useRef(null);
+  const animPosRef = useRef(0); const framesRef = useRef([]);
   const apiHostRef = useRef(null);
-  const [timestamp, setTimestamp] = useState("");
-  const [mapReady, setMapReady] = useState(false);
+  const [timestamp, setTimestamp] = useState(""); const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
-    let observer = null;
+    let cancelled = false; let observer = null;
     (async () => {
       const L = await loadLeaflet();
       if (cancelled || !L || !mapRef.current) return;
       const map = L.map(mapRef.current, { zoomControl: false, attributionControl: false, dragging: true, scrollWheelZoom: false, doubleClickZoom: false, keyboard: false, touchZoom: false }).setView(center, zoom);
       L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png", { maxZoom: 12, subdomains: "abcd" }).addTo(map);
       if (showLabels) L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png", { maxZoom: 12, subdomains: "abcd", opacity: 0.5 }).addTo(map);
-      mapInstanceRef.current = map;
-      setMapReady(true);
-      if (typeof ResizeObserver !== "undefined") {
-        observer = new ResizeObserver(() => map.invalidateSize());
-        observer.observe(mapRef.current);
-      }
+      mapInstanceRef.current = map; setMapReady(true);
+      if (typeof ResizeObserver !== "undefined") { observer = new ResizeObserver(() => map.invalidateSize()); observer.observe(mapRef.current); }
     })();
-    return () => {
-      cancelled = true;
-      if (observer) observer.disconnect();
-      if (animTimerRef.current) clearTimeout(animTimerRef.current);
-      if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; }
-    };
+    return () => { cancelled = true; if (observer) observer.disconnect(); if (animTimerRef.current) clearTimeout(animTimerRef.current); if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    const L = window.L;
-    const map = mapInstanceRef.current;
+    const L = window.L; const map = mapInstanceRef.current;
     if (!L || !map || !mapReady) return;
     map.eachLayer((layer) => { if (layer.options?.isOverlayMarker) map.removeLayer(layer); });
     (markers || []).forEach((m) => {
       if (m.lat == null || m.lon == null) return;
       const dotSize = m.isYou ? 8 : 4;
-      const dotStyle = m.isYou
-        ? `width:${dotSize}px;height:${dotSize}px;background:${accent};box-shadow:0 0 8px ${accent},0 0 16px ${accent};border-radius:50%;animation:corePulse 1.5s ease-in-out infinite;`
-        : `width:${dotSize}px;height:${dotSize}px;background:${accent};box-shadow:0 0 4px ${accent};border-radius:50%;`;
+      const dotStyle = m.isYou ? `width:${dotSize}px;height:${dotSize}px;background:${accent};box-shadow:0 0 8px ${accent},0 0 16px ${accent};border-radius:50%;animation:corePulse 1.5s ease-in-out infinite;` : `width:${dotSize}px;height:${dotSize}px;background:${accent};box-shadow:0 0 4px ${accent};border-radius:50%;`;
       const labelHtml = m.label ? `<div style="font-family:ui-monospace,'SF Mono',monospace;color:${accent};font-size:10px;letter-spacing:0.05em;text-shadow:0 0 4px ${accent},0 0 2px #000;white-space:nowrap;transform:translate(${dotSize + 4}px,-50%);">${m.label}</div>` : "";
       const icon = L.divIcon({ html: `${labelHtml}<div style="${dotStyle}"></div>`, className: "", iconSize: [dotSize, dotSize], iconAnchor: [dotSize / 2, dotSize / 2] });
       L.marker([m.lat, m.lon], { icon, isOverlayMarker: true, interactive: false }).addTo(map);
@@ -596,9 +538,7 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
 
   useEffect(() => {
     if (!mapReady) return;
-    let cancelled = false;
-    let activeFadeIn = null;
-
+    let cancelled = false; let activeFadeIn = null;
     const start = async () => {
       try {
         const resp = await fetch("https://api.rainviewer.com/public/weather-maps.json");
@@ -610,58 +550,38 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
         framesRef.current = past;
         if (!framesRef.current.length) return;
         animPosRef.current = past.length - 1;
-
         const tick = () => {
           if (cancelled) return;
-          const L = window.L;
-          const map = mapInstanceRef.current;
-          const frames = framesRef.current;
+          const L = window.L; const map = mapInstanceRef.current; const frames = framesRef.current;
           if (!L || !map || !frames.length) return;
-
           const frame = frames[animPosRef.current];
-          const tileUrl = `${apiHostRef.current}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
-          const layer = L.tileLayer(tileUrl, { tileSize: 256, opacity: 0.0, zIndex: 100 }).addTo(map);
-
+          const layer = L.tileLayer(`${apiHostRef.current}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`, { tileSize: 256, opacity: 0.0, zIndex: 100 }).addTo(map);
           let opacity = 0;
           if (activeFadeIn) clearInterval(activeFadeIn);
           activeFadeIn = setInterval(() => {
             if (cancelled) { clearInterval(activeFadeIn); return; }
             opacity += 0.2;
             if (opacity >= 0.7) {
-              opacity = 0.7;
-              clearInterval(activeFadeIn);
-              activeFadeIn = null;
-              while (radarLayersRef.current.length > 1) {
-                const old = radarLayersRef.current.shift();
-                if (old && mapInstanceRef.current) mapInstanceRef.current.removeLayer(old);
-              }
+              opacity = 0.7; clearInterval(activeFadeIn); activeFadeIn = null;
+              while (radarLayersRef.current.length > 1) { const old = radarLayersRef.current.shift(); if (old && mapInstanceRef.current) mapInstanceRef.current.removeLayer(old); }
             }
             layer.setOpacity(opacity);
           }, 40);
-
           radarLayersRef.current.push(layer);
-
           const date = new Date(frame.time * 1000);
-          const ctTime = date.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" });
-          setTimestamp(`${ctTime} CT`);
-
+          setTimestamp(`${date.toLocaleTimeString("en-US", { timeZone: "America/Chicago", hour: "numeric", minute: "2-digit" })} CT`);
           animPosRef.current = (animPosRef.current + 1) % frames.length;
           animTimerRef.current = setTimeout(tick, 2000);
         };
-
         tick();
       } catch {}
     };
-
     start();
     return () => {
       cancelled = true;
       if (activeFadeIn) clearInterval(activeFadeIn);
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
-      if (mapInstanceRef.current) {
-        radarLayersRef.current.forEach((layer) => { try { mapInstanceRef.current.removeLayer(layer); } catch {} });
-        radarLayersRef.current = [];
-      }
+      if (mapInstanceRef.current) { radarLayersRef.current.forEach((layer) => { try { mapInstanceRef.current.removeLayer(layer); } catch {} }); radarLayersRef.current = []; }
     };
   }, [mapReady]);
 
@@ -687,13 +607,8 @@ function NationalWeather({ highlighted, weather }) {
 }
 
 function MiniSparkline({ up, color }) {
-  const pts = [];
-  let y = 50;
-  for (let x = 0; x <= 100; x += 5) {
-    y += (Math.random() - 0.5) * 8 + (up ? -0.4 : 0.4);
-    y = Math.max(15, Math.min(85, y));
-    pts.push(`${x},${y}`);
-  }
+  const pts = []; let y = 50;
+  for (let x = 0; x <= 100; x += 5) { y += (Math.random() - 0.5) * 8 + (up ? -0.4 : 0.4); y = Math.max(15, Math.min(85, y)); pts.push(`${x},${y}`); }
   return (
     <svg viewBox="0 0 100 100" className="w-full h-8" preserveAspectRatio="none">
       <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.5" opacity="0.9" />
@@ -703,21 +618,9 @@ function MiniSparkline({ up, color }) {
 }
 
 function StatusPill({ session }) {
-  if (session === "open") return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#34D39922", border: "1px solid #34D39966", color: "#34D399" }}>
-      <span className="w-1 h-1 rounded-full bg-emerald-400" style={{ animation: "corePulse 1.5s ease-in-out infinite" }} />LIVE
-    </span>
-  );
-  if (session === "afterhours") return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#FBBF2422", border: "1px solid #FBBF2466", color: "#FBBF24" }}>
-      <span className="w-1 h-1 rounded-full bg-amber-400" />AFTER HRS
-    </span>
-  );
-  return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#64748B22", border: "1px solid #64748B66", color: "#94A3B8" }}>
-      <span className="w-1 h-1 rounded-full bg-slate-400" />CLOSED
-    </span>
-  );
+  if (session === "open") return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#34D39922", border: "1px solid #34D39966", color: "#34D399" }}><span className="w-1 h-1 rounded-full bg-emerald-400" style={{ animation: "corePulse 1.5s ease-in-out infinite" }} />LIVE</span>;
+  if (session === "afterhours") return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#FBBF2422", border: "1px solid #FBBF2466", color: "#FBBF24" }}><span className="w-1 h-1 rounded-full bg-amber-400" />AFTER HRS</span>;
+  return <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[8px] tracking-[0.2em]" style={{ background: "#64748B22", border: "1px solid #64748B66", color: "#94A3B8" }}><span className="w-1 h-1 rounded-full bg-slate-400" />CLOSED</span>;
 }
 
 function WatchlistChips({ watchlists, active, onSelect, accent }) {
@@ -727,13 +630,7 @@ function WatchlistChips({ watchlists, active, onSelect, accent }) {
     <div className="flex gap-1 flex-wrap mb-2">
       {names.map((name) => {
         const isActive = name === active;
-        return (
-          <button key={name} onClick={() => onSelect(name)}
-            className="px-2 py-0.5 text-[8px] tracking-[0.2em] transition-all"
-            style={{ border: `1px solid ${isActive ? accent : `${accent}44`}`, color: isActive ? accent : `${accent}88`, background: isActive ? `${accent}18` : "transparent", boxShadow: isActive ? `0 0 8px ${accent}44` : "none" }}>
-            {name}
-          </button>
-        );
+        return <button key={name} onClick={() => onSelect(name)} className="px-2 py-0.5 text-[8px] tracking-[0.2em] transition-all" style={{ border: `1px solid ${isActive ? accent : `${accent}44`}`, color: isActive ? accent : `${accent}88`, background: isActive ? `${accent}18` : "transparent", boxShadow: isActive ? `0 0 8px ${accent}44` : "none" }}>{name}</button>;
       })}
     </div>
   );
@@ -742,47 +639,27 @@ function WatchlistChips({ watchlists, active, onSelect, accent }) {
 function WatchlistPanel({ highlighted, watchlists, activeWatchlistName, marketData, session, loading, error, onSwitchList, kvSource }) {
   const accent = "#67E8F9";
   const activeSymbols = (watchlists || DEFAULT_WATCHLISTS)[activeWatchlistName] || [];
-  const rows = activeSymbols.map((sym) => {
-    const found = (marketData || []).find((d) => d.symbol === sym || d.id === sym);
-    return found || blankEntry(sym);
-  });
+  const rows = activeSymbols.map((sym) => { const found = (marketData || []).find((d) => d.symbol === sym || d.id === sym); return found || blankEntry(sym); });
   const sessionLabel = session === "open" ? "LIVE" : session === "afterhours" ? "AFTER HRS" : "CLOSED";
-  const title = `${activeWatchlistName} · ${sessionLabel}`;
   return (
-    <Panel title={title} code="MKT.01" accent={accent} highlighted={highlighted} panelKey="watchlist">
+    <Panel title={`${activeWatchlistName} · ${sessionLabel}`} code="MKT.01" accent={accent} highlighted={highlighted} panelKey="watchlist">
       <div className="flex items-center justify-between mb-1 flex-wrap gap-1">
         <WatchlistChips watchlists={watchlists} active={activeWatchlistName} onSelect={onSwitchList} accent={accent} />
         <StatusPill session={session} />
       </div>
       <div className="overflow-y-auto" style={{ maxHeight: "210px" }}>
-        {rows.length === 0 ? (
-          <div className="text-[10px] opacity-40 italic py-4 text-center" style={{ color: accent }}>No symbols. Ask JARVIS to add some.</div>
-        ) : (
-          rows.map((stock) => {
-            const up = (stock.chg ?? 0) >= 0;
-            const color = up ? "#34D399" : "#FB7185";
-            const hasData = stock.val != null;
-            return (
-              <div key={stock.symbol || stock.id} className="flex items-center gap-3 py-1.5 border-b last:border-b-0" style={{ borderColor: `${accent}15` }}>
-                <div className="w-20 flex-shrink-0">
-                  <div className="text-[10px] tracking-[0.2em] opacity-70 truncate">{stock.name || stock.symbol}</div>
-                  <div className="text-[8px] tracking-[0.15em] opacity-40">{stock.symbol || stock.id}</div>
-                </div>
-                <div className="flex-1 min-w-0"><MiniSparkline up={up} color={color} /></div>
-                <div className="text-right flex-shrink-0">
-                  {hasData ? (
-                    <>
-                      <div className="text-sm font-light tabular-nums" style={{ color: accent }}>{stock.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                      <div className="text-[10px] tabular-nums" style={{ color }}>{up ? "▲" : "▼"} {Math.abs(stock.chg).toFixed(2)} ({up ? "+" : ""}{(stock.pct ?? 0).toFixed(2)}%)</div>
-                    </>
-                  ) : (
-                    <div className="text-[10px] opacity-40 italic">{loading ? "loading…" : error ? "error" : "—"}</div>
-                  )}
-                </div>
+        {rows.length === 0 ? <div className="text-[10px] opacity-40 italic py-4 text-center" style={{ color: accent }}>No symbols. Ask JARVIS to add some.</div> : rows.map((stock) => {
+          const up = (stock.chg ?? 0) >= 0; const color = up ? "#34D399" : "#FB7185"; const hasData = stock.val != null;
+          return (
+            <div key={stock.symbol || stock.id} className="flex items-center gap-3 py-1.5 border-b last:border-b-0" style={{ borderColor: `${accent}15` }}>
+              <div className="w-20 flex-shrink-0"><div className="text-[10px] tracking-[0.2em] opacity-70 truncate">{stock.name || stock.symbol}</div><div className="text-[8px] tracking-[0.15em] opacity-40">{stock.symbol || stock.id}</div></div>
+              <div className="flex-1 min-w-0"><MiniSparkline up={up} color={color} /></div>
+              <div className="text-right flex-shrink-0">
+                {hasData ? <><div className="text-sm font-light tabular-nums" style={{ color: accent }}>{stock.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div><div className="text-[10px] tabular-nums" style={{ color }}>{up ? "▲" : "▼"} {Math.abs(stock.chg).toFixed(2)} ({up ? "+" : ""}{(stock.pct ?? 0).toFixed(2)}%)</div></> : <div className="text-[10px] opacity-40 italic">{loading ? "loading…" : error ? "error" : "—"}</div>}
               </div>
-            );
-          })
-        )}
+            </div>
+          );
+        })}
       </div>
       {kvSource === "localStorage" && <div className="mt-1 text-[8px] tracking-[0.15em] opacity-50" style={{ color: "#FBBF24" }}>⚠ saved locally only</div>}
       {error && <div className="mt-1 text-[9px]" style={{ color: "#FB7185" }}>{error}</div>}
@@ -797,26 +674,11 @@ function CommoditiesPanel({ highlighted, commodities, session, loading, error })
       <div className="flex justify-end mb-1"><StatusPill session={session} /></div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-2">
         {(commodities || FALLBACK_COMMODITIES).map((c) => {
-          const up = (c.chg ?? 0) >= 0;
-          const color = up ? "#34D399" : "#FB7185";
-          const hasData = c.val != null;
+          const up = (c.chg ?? 0) >= 0; const color = up ? "#34D399" : "#FB7185"; const hasData = c.val != null;
           return (
             <div key={c.id} className="py-1 border-b" style={{ borderColor: `${accent}10` }}>
-              <div className="flex justify-between items-baseline">
-                <span className="text-[10px] tracking-[0.2em] opacity-70">{c.name}</span>
-                <span className="text-[8px] opacity-40 tracking-[0.1em]">{c.id}</span>
-              </div>
-              {hasData ? (
-                <>
-                  <div className="flex justify-between items-baseline mt-0.5">
-                    <span className="text-sm font-light tabular-nums" style={{ color: accent }}>{c.val.toFixed(2)}</span>
-                    <span className="text-[10px] tabular-nums" style={{ color }}>{up ? "+" : ""}{c.chg.toFixed(2)}</span>
-                  </div>
-                  <div className="text-[8px] opacity-30 tracking-[0.1em] mt-0.5">{c.unit}</div>
-                </>
-              ) : (
-                <div className="text-[10px] opacity-40 italic mt-0.5">{loading ? "loading…" : error ? "no data" : "—"}</div>
-              )}
+              <div className="flex justify-between items-baseline"><span className="text-[10px] tracking-[0.2em] opacity-70">{c.name}</span><span className="text-[8px] opacity-40 tracking-[0.1em]">{c.id}</span></div>
+              {hasData ? <><div className="flex justify-between items-baseline mt-0.5"><span className="text-sm font-light tabular-nums" style={{ color: accent }}>{c.val.toFixed(2)}</span><span className="text-[10px] tabular-nums" style={{ color }}>{up ? "+" : ""}{c.chg.toFixed(2)}</span></div><div className="text-[8px] opacity-30 tracking-[0.1em] mt-0.5">{c.unit}</div></> : <div className="text-[10px] opacity-40 italic mt-0.5">{loading ? "loading…" : error ? "no data" : "—"}</div>}
             </div>
           );
         })}
@@ -866,10 +728,6 @@ function ConversationPanel({ messages, highlighted }) {
   );
 }
 
-// ============================================================
-// MAIN
-// ============================================================
-
 export default function JarvisBriefing() {
   const [mode, setMode] = useState("idle");
   const [holoCommand, setHoloCommand] = useState(null);
@@ -882,30 +740,24 @@ export default function JarvisBriefing() {
   const [now, setNow] = useState(new Date());
   const [voiceError, setVoiceError] = useState(null);
   const [interimTranscript, setInterimTranscript] = useState("");
-
-  // ── NEW: intro overlay state ───────────────────────────────────────────────
   const [introSong, setIntroSong] = useState(null);
 
-  // Watchlists
   const [watchlists, setWatchlists] = useState(DEFAULT_WATCHLISTS);
   const [activeWatchlistName, setActiveWatchlistName] = useState("DEFAULT");
   const [kvSource, setKvSource] = useState("kv");
   const [watchlistsLoaded, setWatchlistsLoaded] = useState(false);
 
-  // Market
   const [marketData, setMarketData] = useState([]);
   const [commodities, setCommodities] = useState(FALLBACK_COMMODITIES);
   const [marketLoading, setMarketLoading] = useState(true);
   const [marketError, setMarketError] = useState(null);
 
-  // Weather
   const [weatherData, setWeatherData] = useState(FALLBACK_WEATHER);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState(null);
 
   const marketSession = getMarketSession(now);
 
-  // Stable refs for tool executor
   const watchlistsRef = useRef(watchlists);
   const activeWatchlistNameRef = useRef(activeWatchlistName);
   const marketDataRef = useRef(marketData);
@@ -926,22 +778,28 @@ export default function JarvisBriefing() {
 
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
 
-  // Load watchlists
+  // ── ElevenLabs TTS with Web Speech fallback + mobile unlock ───────────────
+  const { speak, unlockSpeech } = useElevenLabsSpeak();
+
+  // ── Daily Apple Music intro + boot overlay ────────────────────────────────
+  const { introState, skipIntro } = useJarvisIntro({
+    onComplete: () => setTimeout(() => speak("Good morning. All systems online. How can I assist you today?"), 500),
+    onSongInfo: (song) => setIntroSong(song),
+  });
+
   useEffect(() => {
     (async () => {
       try {
         const data = await apiGetWatchlists();
         const wl = data.watchlists || DEFAULT_WATCHLISTS;
-        setWatchlists(wl);
-        setKvSource(data.source || "kv");
+        setWatchlists(wl); setKvSource(data.source || "kv");
         const savedActive = lsLoadActive();
         setActiveWatchlistName(wl[savedActive] ? savedActive : "DEFAULT");
         setWatchlistsLoaded(true);
       } catch {
         const lsData = lsLoad();
         if (lsData) { setWatchlists(lsData); setKvSource("localStorage"); }
-        setActiveWatchlistName(lsLoadActive());
-        setWatchlistsLoaded(true);
+        setActiveWatchlistName(lsLoadActive()); setWatchlistsLoaded(true);
       }
     })();
   }, []);
@@ -955,8 +813,7 @@ export default function JarvisBriefing() {
       if (!res.ok) { setMarketError(data.error || "Market fetch failed"); setMarketLoading(false); return; }
       setMarketData(data.watchlist || []);
       setCommodities(data.commodities?.length ? data.commodities : FALLBACK_COMMODITIES);
-      setMarketError(null);
-      setMarketLoading(false);
+      setMarketError(null); setMarketLoading(false);
     } catch (err) { setMarketError(String(err)); setMarketLoading(false); }
   }, []);
 
@@ -968,13 +825,11 @@ export default function JarvisBriefing() {
     return () => clearInterval(interval);
   }, [watchlistsLoaded, activeWatchlistName, watchlists, fetchActiveMarketData]);
 
-  // Weather
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await fetch("/api/weather");
-        const data = await res.json();
+        const res = await fetch("/api/weather"); const data = await res.json();
         if (cancelled) return;
         if (!res.ok) { setWeatherError(data.error || "Weather fetch failed"); setWeatherLoading(false); return; }
         const fallbackByCode = Object.fromEntries(FALLBACK_WEATHER.national.cities.map((c) => [c.code, c]));
@@ -989,23 +844,10 @@ export default function JarvisBriefing() {
 
   const updateWatchlists = useCallback((updated) => { setWatchlists(updated); lsSave(updated); }, []);
   const refreshActiveWatchlist = useCallback((symbols) => { fetchActiveMarketData(symbols); }, [fetchActiveMarketData]);
+  const handleSwitchList = useCallback((name) => { setActiveWatchlistName(name); lsSaveActive(name); fetchActiveMarketData(watchlistsRef.current[name] || []); }, [fetchActiveMarketData]);
 
-  const handleSwitchList = useCallback((name) => {
-    setActiveWatchlistName(name);
-    lsSaveActive(name);
-    fetchActiveMarketData(watchlistsRef.current[name] || []);
-  }, [fetchActiveMarketData]);
-
-  // ── NEW: ElevenLabs TTS (replaces old speak function) ─────────────────────
-  const { speak, stopSpeaking, unlockSpeech } = useElevenLabsSpeak();
-
-  // ── NEW: Daily intro music + boot overlay ──────────────────────────────────
-  const { introState, skipIntro } = useJarvisIntro({
-    onComplete: () => {
-      setTimeout(() => speak("Good morning. All systems online. How can I assist you today?"), 500);
-    },
-    onSongInfo: (song) => setIntroSong(song),
-  });
+  // ── Apple Music playback controller ─────────────────────────────────────
+  const musicController = useMusicController();
 
   const sendToClaude = useCallback(async (userMessage) => {
     setMode("thinking");
@@ -1036,39 +878,28 @@ export default function JarvisBriefing() {
       const toolResults = await Promise.all(
         toolUseBlocks.map(async (tb) => {
           const result = await executeToolCall(tb.name, tb.input, {
-            weatherData: weatherDataRef.current,
-            marketData: marketDataRef.current,
-            commodities: commoditiesRef.current,
-            marketSession: marketSessionRef.current,
-            watchlists: watchlistsRef.current,
-            activeWatchlistName: activeWatchlistNameRef.current,
-            setHighlightedPanel,
-            setHoloCommand,
-            setResearchCommand,
-            setCalendarOpen,
+            weatherData: weatherDataRef.current, marketData: marketDataRef.current,
+            commodities: commoditiesRef.current, marketSession: marketSessionRef.current,
+            watchlists: watchlistsRef.current, activeWatchlistName: activeWatchlistNameRef.current,
+            setHighlightedPanel, setHoloCommand, setResearchCommand, setCalendarOpen,
             setCalendarCommand: (cmd) => setCalendarCommand(cmd),
             setActiveWatchlistName: (name) => { setActiveWatchlistName(name); lsSaveActive(name); },
-            updateWatchlists,
-            refreshActiveWatchlist,
+            updateWatchlists, refreshActiveWatchlist,
+            musicController,
           });
           return { type: "tool_result", tool_use_id: tb.id, content: result };
         })
       );
 
-      if (spokenText) {
-        setConversation((c) => [...c, { role: "assistant", display: spokenText }]);
-        setMode("speaking"); await speak(spokenText); setMode("thinking");
-      }
+      if (spokenText) { setConversation((c) => [...c, { role: "assistant", display: spokenText }]); setMode("speaking"); await speak(spokenText); setMode("thinking"); }
       messages = [...messages, { role: "user", content: toolResults }];
     }
-
     apiMessagesRef.current = messages; setMode("idle");
   }, [speak, updateWatchlists, refreshActiveWatchlist]);
 
   const startListening = useCallback(() => {
     if (isListeningRef.current) return;
-    // ── NEW: unlock audio context inside gesture handler ───────────────────
-    unlockSpeech();
+    unlockSpeech(); // unlock audio on user gesture — required for iOS/Android
     setVoiceError(null);
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setVoiceError("Speech recognition not supported. Use Chrome, Edge, or Safari."); return; }
@@ -1094,12 +925,9 @@ export default function JarvisBriefing() {
 
   const stopListening = useCallback(() => { if (recognitionRef.current && isListeningRef.current) recognitionRef.current.stop(); }, []);
 
-  // ── NEW: Wake word — listens for "hey jarvis" when idle ───────────────────
+  // ── Wake word — continuously listens for "hey jarvis" when idle ───────────
   useWakeWord({
-    onWakeWord: () => {
-      unlockSpeech();
-      startListening();
-    },
+    onWakeWord: () => { unlockSpeech(); startListening(); },
     enabled: mode === "idle",
   });
 
@@ -1110,11 +938,7 @@ export default function JarvisBriefing() {
     return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); };
   }, [mode, startListening, stopListening]);
 
-  // ── NEW: unlock speech on mic button tap too ──────────────────────────────
-  const handleMicClick = () => {
-    unlockSpeech();
-    if (mode === "idle") startListening(); else if (mode === "listening") stopListening();
-  };
+  const handleMicClick = () => { unlockSpeech(); if (mode === "idle") startListening(); else if (mode === "listening") stopListening(); };
 
   const timeStr = now.toLocaleTimeString("en-US", { hour12: false });
   const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).toUpperCase();
@@ -1123,7 +947,7 @@ export default function JarvisBriefing() {
   return (
     <div className="min-h-screen w-full text-slate-200 font-mono relative overflow-hidden" style={{ background: "radial-gradient(ellipse at center, #0B1626 0%, #060B14 60%, #03070D 100%)" }}>
 
-      {/* ── NEW: Daily intro overlay ──────────────────────────────────────── */}
+      {/* ── Daily intro boot overlay (Apple Music + boot sequence) ── */}
       <IntroOverlay introState={introState} songInfo={introSong} onSkip={skipIntro} />
 
       <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: `linear-gradient(rgba(125,211,252,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(125,211,252,0.05) 1px,transparent 1px)`, backgroundSize: "32px 32px", maskImage: "radial-gradient(ellipse at center,black 30%,transparent 95%)", WebkitMaskImage: "radial-gradient(ellipse at center,black 30%,transparent 95%)" }} />
@@ -1147,13 +971,7 @@ export default function JarvisBriefing() {
         <div className="flex items-center gap-6 text-[10px] tracking-[0.25em]">
           <span className="opacity-60">{dateStr}</span>
           <span style={{ color: "#7DD3FC" }} className="tabular-nums">{timeStr}<span style={{ animation: "blink 1s steps(1) infinite" }}>:</span></span>
-          <button
-            onClick={() => setCalendarOpen(true)}
-            className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
-            style={{ border: "1px solid #7DD3FC44", color: "#7DD3FC88", background: "transparent" }}
-          >
-            📅 CALENDAR
-          </button>
+          <button onClick={() => setCalendarOpen(true)} className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all" style={{ border: "1px solid #7DD3FC44", color: "#7DD3FC88", background: "transparent" }}>📅 CALENDAR</button>
           <span className="opacity-50">SYS.{MODE_LABELS[mode]}</span>
         </div>
       </div>
@@ -1198,34 +1016,24 @@ export default function JarvisBriefing() {
           <HolographicPanel externalCommand={holoCommand} />
           <WatchlistPanel
             highlighted={highlightedPanel === "watchlist"}
-            watchlists={watchlists}
-            activeWatchlistName={activeWatchlistName}
-            marketData={marketData}
-            session={marketSession}
-            loading={marketLoading}
-            error={marketError}
-            onSwitchList={handleSwitchList}
-            kvSource={kvSource}
+            watchlists={watchlists} activeWatchlistName={activeWatchlistName}
+            marketData={marketData} session={marketSession}
+            loading={marketLoading} error={marketError}
+            onSwitchList={handleSwitchList} kvSource={kvSource}
           />
           <CommoditiesPanel
             highlighted={highlightedPanel === "commodities"}
-            commodities={commodities}
-            session={marketSession}
-            loading={marketLoading}
-            error={marketError}
+            commodities={commodities} session={marketSession}
+            loading={marketLoading} error={marketError}
           />
         </div>
       </div>
 
-      <CalendarPanel
-        isOpen={calendarOpen}
-        onClose={() => setCalendarOpen(false)}
-        externalCommand={calendarCommand}
-      />
+      <CalendarPanel isOpen={calendarOpen} onClose={() => setCalendarOpen(false)} externalCommand={calendarCommand} />
 
       <div className="relative z-10 flex items-center justify-between px-6 py-2 border-t text-[9px] tracking-[0.25em] opacity-50" style={{ borderColor: "#7DD3FC22" }}>
-        <span>HOLD SPACEBAR · OR TAP MIC TO SPEAK</span>
-        <span>WATCHLIST · {activeWatchlistName} · {((watchlists || DEFAULT_WATCHLISTS)[activeWatchlistName] || []).length}/5 · {marketLoading ? "LOADING…" : marketError ? "ERROR" : "TWELVE DATA"}</span>
+        <span>HOLD SPACEBAR · TAP MIC · SAY "HEY JARVIS"</span>
+        <span>WATCHLIST · {activeWatchlistName} · {activeSymbols.length}/5 · {marketLoading ? "LOADING…" : marketError ? "ERROR" : "TWELVE DATA"}</span>
         <span>SONNET 4.6 · ENG-US</span>
       </div>
 
