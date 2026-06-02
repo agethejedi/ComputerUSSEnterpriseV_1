@@ -311,6 +311,13 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify(result);
     }
 
+    // ── Memory write ──────────────────────────────────────────────────────────
+    case "save_memory": {
+      // D1 write is handled server-side in chat.js
+      // Client just needs to acknowledge the tool call completed
+      return JSON.stringify({ ok: true, saved: true, module: input.module });
+    }
+
     default:
       return JSON.stringify({ error: `Unknown tool: ${name}` });
   }
@@ -746,7 +753,32 @@ export default function JarvisBriefing() {
           apiMessagesRef.current = messages;
           setMode("speaking"); await speak(spokenText);
         } else { apiMessagesRef.current = messages; }
-        setMode("idle"); return;
+        setMode("idle");
+        // Auto-log session to M6 if conversation was substantial (3+ exchanges)
+        const exchangeCount = apiMessagesRef.current.filter(m => m.role === "user").length;
+        if (exchangeCount >= 3) {
+          const today = new Date().toISOString().slice(0, 10);
+          const summary = apiMessagesRef.current
+            .filter(m => m.role === "user")
+            .map(m => typeof m.content === "string" ? m.content : "")
+            .filter(Boolean)
+            .slice(-3)
+            .join(" | ");
+          fetch("/api/memory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "log_session",
+              module: "m6",
+              data: {
+                session_date: today,
+                session_type: "briefing",
+                summary: `Session with ${exchangeCount} exchanges. Topics: ${summary.slice(0, 300)}`,
+              }
+            })
+          }).catch(() => {}); // Silent — don't block UI on memory write
+        }
+        return;
       }
 
       const toolResults = await Promise.all(
