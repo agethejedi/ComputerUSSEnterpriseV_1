@@ -5,7 +5,7 @@
 //   projectRefs: ref map { tania, kaso, riskxlabs, vision, mcm, xwallet }
 //                each ref.current is a DOM element — sphere draws neurons to them
 
-import { useEffect, useRef } from "react";
+
 
 // ── Mode mapping ──────────────────────────────────────────────────────────────
 function modeToState(mode) {
@@ -271,7 +271,10 @@ function drawHex(ctx,cx,cy,size,col,opacity,label,name,active) {
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function JarvisSphere({ mode="idle", sphereMode="briefing", projectRefs={} }) {
+import { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
+
+// Re-export as forwardRef so parent can call focusProject / focusMem
+const JarvisSphere = forwardRef(function JarvisSphere({ mode="idle", sphereMode="briefing", projectRefs={} }, ref) {
   const mainRef    = useRef(null);
   const hexRef     = useRef(null);
   const stateRef   = useRef({ cur:"standby", tgt:"standby", t:1 });
@@ -317,7 +320,7 @@ export default function JarvisSphere({ mode="idle", sphereMode="briefing", proje
     }
   }, [sphereMode]);
 
-  // Build neurons once when projectRefs change
+  // Build neurons — targetFn reads positions live at draw time
   useEffect(() => {
     const neurons = {};
     Object.entries(PROJ_CONFIGS).forEach(([key, cfg]) => {
@@ -325,14 +328,17 @@ export default function JarvisSphere({ mode="idle", sphereMode="briefing", proje
         const el = projectRefs[key]?.current;
         if (!el) return null;
         const r = el.getBoundingClientRect();
-        const canvasRect = mainRef.current?.getBoundingClientRect();
-        if (!canvasRect) return null;
-        // Convert to canvas-local coordinates
+        const canvas = mainRef.current;
+        if (!canvas) return null;
+        const canvasRect = canvas.getBoundingClientRect();
+        // Scale from page coords to canvas pixel coords
+        const scaleX = canvas.width  / canvasRect.width;
+        const scaleY = canvas.height / canvasRect.height;
         return {
-          x: r.left + r.width/2  - canvasRect.left,
-          y: r.top  + r.height/2 - canvasRect.top,
-          w: r.width,
-          h: r.height,
+          x: (r.left + r.width  / 2 - canvasRect.left) * scaleX,
+          y: (r.top  + r.height / 2 - canvasRect.top)  * scaleY,
+          w: r.width  * scaleX,
+          h: r.height * scaleY,
         };
       };
       neurons[key] = Array.from({ length: cfg.neuronCount }, (_, i) =>
@@ -548,10 +554,99 @@ export default function JarvisSphere({ mode="idle", sphereMode="briefing", proje
     };
   }, []);
 
+  // Expose focus controls to parent via ref
+  useImperativeHandle(ref, () => ({
+    // Focus a project — sets projTarget to 1, auto-fades after delay
+    focusProject: (key, autofadeSecs = 0) => {
+      const d = dataRef.current;
+      if (!d.projOpacity.hasOwnProperty(key)) return;
+      // Deactivate all others first
+      Object.keys(d.projTarget).forEach(k => { d.projTarget[k] = 0; });
+      d.projTarget[key] = 1;
+      if (autofadeSecs > 0) {
+        setTimeout(() => { if (dataRef.current) dataRef.current.projTarget[key] = 0; }, autofadeSecs * 1000);
+      }
+    },
+    // Toggle a project focus
+    toggleProject: (key) => {
+      const d = dataRef.current;
+      if (!d.projOpacity.hasOwnProperty(key)) return;
+      const isActive = d.projTarget[key] === 1;
+      Object.keys(d.projTarget).forEach(k => { d.projTarget[k] = 0; });
+      if (!isActive) d.projTarget[key] = 1;
+    },
+    // Focus a memory module
+    focusMem: (moduleId, autofadeSecs = 0) => {
+      const d = dataRef.current;
+      if (!d.memOpacity.hasOwnProperty(moduleId)) return;
+      d.memTarget[moduleId] = 1;
+      if (autofadeSecs > 0) {
+        setTimeout(() => { if (dataRef.current) dataRef.current.memTarget[moduleId] = 0; }, autofadeSecs * 1000);
+      }
+    },
+    // Toggle a memory module
+    toggleMem: (moduleId) => {
+      const d = dataRef.current;
+      if (!d.memOpacity.hasOwnProperty(moduleId)) return;
+      d.memTarget[moduleId] = d.memTarget[moduleId] === 1 ? 0 : 1;
+    },
+    // Clear all focus
+    clearFocus: () => {
+      const d = dataRef.current;
+      Object.keys(d.projTarget).forEach(k => { d.projTarget[k] = 0; });
+      // Keep mem at baseline in orchestrator
+      if (d.sphereMode === "orchestrator") {
+        MEM_MODULES.forEach(m => { d.memTarget[m.id] = 1; });
+      }
+    },
+    // Get current focus state
+    getFocusState: () => ({ ...dataRef.current.projTarget }),
+  }), []);
+
   return (
     <div style={{ position:"relative", width:"100%", height:"100%" }}>
       <canvas ref={mainRef} style={{ position:"absolute", inset:0, width:"100%", height:"100%" }} />
-      <canvas ref={hexRef}  style={{ position:"absolute", inset:0, width:"100%", height:"100%", pointerEvents:"none", zIndex:1 }} />
+      <canvas
+        ref={hexRef}
+        style={{ position:"absolute", inset:0, width:"100%", height:"100%", zIndex:1,
+          pointerEvents: dataRef.current?.sphereMode === "orchestrator" ? "auto" : "none",
+          cursor: "pointer" }}
+        onClick={(e) => {
+          const d = dataRef.current;
+          if (d?.sphereMode !== "orchestrator") return;
+          const canvas = hexRef.current;
+          if (!canvas) return;
+          const rect = canvas.getBoundingClientRect();
+          const scaleX = canvas.width  / rect.width;
+          const scaleY = canvas.height / rect.height;
+          const mx = (e.clientX - rect.left) * scaleX;
+          const my = (e.clientY - rect.top)  * scaleY;
+          const cx = canvas.width  / 2;
+          const cy = canvas.height / 2;
+          const radius = Math.min(canvas.width, canvas.height) * 0.26;
+          // Check each hex
+          MEM_MODULES.forEach((m, idx) => {
+            const def = HEX_DEFS[idx];
+            const dist = radius * 0.52 + radius * 0.55;
+            const hx = cx + Math.cos(def.angle) * dist;
+            const hy = cy + Math.sin(def.angle) * dist;
+            const dx = mx - hx, dy = my - hy;
+            if (Math.sqrt(dx*dx + dy*dy) < HEX_SIZE * 1.4) {
+              // Toggle this module — deactivate others
+              const wasActive = d.memTarget[m.id] === 1;
+              // In orchestrator base state all are at 1 — clicking focuses one and dims others
+              if (!wasActive || Object.values(d.memTarget).filter(v => v === 1).length > 1) {
+                MEM_MODULES.forEach(mm => { d.memTarget[mm.id] = mm.id === m.id ? 1 : 0.12; });
+              } else {
+                // Clicking the only active one restores all
+                MEM_MODULES.forEach(mm => { d.memTarget[mm.id] = 1; });
+              }
+            }
+          });
+        }}
+      />
     </div>
   );
-}
+});
+
+export default JarvisSphere;

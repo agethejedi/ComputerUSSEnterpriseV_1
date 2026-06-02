@@ -311,6 +311,26 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify(result);
     }
 
+    // ── Orchestrator focus ────────────────────────────────────────────────────
+    case "focus_project": {
+      const key = input.project?.toLowerCase();
+      if (key && ctx.sphereRef?.current) {
+        ctx.sphereRef.current.focusProject(key, input.autofade || 0);
+      }
+      return JSON.stringify({ ok:true, focused: key });
+    }
+    case "focus_memory": {
+      const moduleId = input.module?.toLowerCase();
+      if (moduleId && ctx.sphereRef?.current) {
+        ctx.sphereRef.current.focusMem(moduleId, input.autofade || 0);
+      }
+      return JSON.stringify({ ok:true, focused: moduleId });
+    }
+    case "clear_focus": {
+      if (ctx.sphereRef?.current) ctx.sphereRef.current.clearFocus();
+      return JSON.stringify({ ok:true });
+    }
+
     // ── Orchestrator mode ─────────────────────────────────────────────────────
     case "set_sphere_mode": {
       ctx.setSphereMode(input.mode || "briefing");
@@ -619,6 +639,9 @@ export default function JarvisBriefing() {
   const [mode, setMode] = useState("idle");
   const [sphereMode, setSphereMode] = useState("briefing"); // "briefing" | "orchestrator"
 
+  // Sphere imperative ref — for focusProject / focusMem
+  const sphereRef = useRef(null);
+
   // Project box refs — sphere draws neurons to these DOM elements
   const projectRefs = {
     tania:     useRef(null),
@@ -810,6 +833,7 @@ export default function JarvisBriefing() {
             updateWatchlists, refreshActiveWatchlist,
             musicController,
             setSphereMode,
+            sphereRef,
           });
           return { type: "tool_result", tool_use_id: tb.id, content: result };
         })
@@ -927,6 +951,7 @@ export default function JarvisBriefing() {
             <div className="absolute -bottom-px -right-px w-3 h-3 border-b border-r" style={{ borderColor: "#7DD3FC" }} />
             <div style={{ position: "relative", height: "320px" }}>
               <JarvisSphere
+                ref={sphereRef}
                 mode={mode}
                 sphereMode={sphereMode}
                 projectRefs={projectRefs}
@@ -1042,7 +1067,7 @@ export default function JarvisBriefing() {
             {/* Sphere — centered, full size */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div style={{ width:"min(52vh,52vw)",height:"min(52vh,52vw)",position:"relative" }}>
-                <JarvisSphere mode={mode} sphereMode="orchestrator" projectRefs={projectRefs} />
+<JarvisSphere ref={sphereRef} mode={mode} sphereMode="orchestrator" projectRefs={projectRefs} />
               </div>
             </div>
 
@@ -1050,6 +1075,7 @@ export default function JarvisBriefing() {
             <div ref={projectRefs.tania} className="absolute z-10"
               style={{ top:"8%",left:"16%",border:"1px solid rgba(201,168,76,0.35)",background:"rgba(201,168,76,0.04)",
                 color:"#c9a84c",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
+              onClick={() => sphereRef.current?.toggleProject("tania")}
               onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(201,168,76,0.4)"}
               onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
               <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
@@ -1063,6 +1089,7 @@ export default function JarvisBriefing() {
             <div ref={projectRefs.kaso} className="absolute z-10"
               style={{ top:"8%",right:"16%",border:"1px solid rgba(59,130,246,0.35)",background:"rgba(59,130,246,0.04)",
                 color:"#3b82f6",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
+              onClick={() => sphereRef.current?.toggleProject("kaso")}
               onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(59,130,246,0.4)"}
               onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
               <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
@@ -1092,6 +1119,7 @@ export default function JarvisBriefing() {
             <div ref={projectRefs.riskxlabs} className="absolute z-10"
               style={{ bottom:"10%",right:"16%",border:"1px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.04)",
                 color:"#ef4444",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
+              onClick={() => sphereRef.current?.toggleProject("riskxlabs")}
               onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(239,68,68,0.4)"}
               onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
               <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
@@ -1108,6 +1136,13 @@ export default function JarvisBriefing() {
               <div style={{ fontWeight:500,marginBottom:3 }}>Vision</div>
               <div style={{ opacity:0.55,fontSize:"6.5px" }}>Blockchain Explorer</div>
               <div style={{ opacity:0.55,fontSize:"6.5px",marginTop:1 }}>Inactive</div>
+            </div>
+
+            {/* Memory hex hint */}
+            <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
+              <div style={{ fontSize:"6.5px", letterSpacing:"0.2em", color:"rgba(201,168,76,0.2)" }}>
+                CLICK PROJECT OR MEMORY HEX TO ACTIVATE NEURONS
+              </div>
             </div>
 
             {/* State label */}
