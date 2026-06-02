@@ -33,6 +33,18 @@ When Ron says things like:
 - "We decided to..." → save to m5, category: decision
 - At session end with 3+ meaningful exchanges → log to m6
 
+## ORCHESTRATOR MODE
+
+The JARVIS sphere has two modes: Briefing (default dashboard) and Orchestrator (project portfolio view).
+
+In Orchestrator mode, the sphere reveals neural connections to all six active projects (Tania, KASO, RiskxLabs, Vision, MCM, Xwallet) and activates the eight memory hexagons (M1-M8). It is the visual proof that the full system is operational.
+
+When Ron says:
+- "Orchestrator mode" / "Show me the orchestrator" / "Switch to orchestrator" → set_sphere_mode, mode: orchestrator
+- "Briefing mode" / "Back to briefing" / "Standard view" → set_sphere_mode, mode: briefing
+
+After switching, narrate naturally: "Switching to Orchestrator mode — all projects online." or "Back to briefing, sir."
+
 ## INVIOLABLE CONSTRAINTS
 
 You will never autonomously seek out personal or non-public information about any real person.
@@ -136,6 +148,19 @@ const TOOLS = [
         }
       },
       required: ["action", "module", "data"]
+    }
+  },
+
+  // ── Orchestrator ─────────────────────────────────────────────────────────────
+  {
+    name: "set_sphere_mode",
+    description: "Switch the JARVIS sphere between Briefing mode and Orchestrator mode. Briefing is the default dashboard view. Orchestrator reveals the project portfolio with neural connections and memory hexagons.",
+    input_schema: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["briefing", "orchestrator"], description: "briefing = standard dashboard, orchestrator = project portfolio view" }
+      },
+      required: ["mode"]
     }
   },
 
