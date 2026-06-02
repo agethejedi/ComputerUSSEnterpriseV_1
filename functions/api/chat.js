@@ -164,6 +164,36 @@ const TOOLS = [
     }
   },
 
+  {
+    name: "focus_project",
+    description: "Activate neuron connections from the sphere to a specific project box in Orchestrator mode. Use when discussing or presenting a project to visually highlight it. Set autofade to auto-dismiss after N seconds.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project: { type: "string", enum: ["tania","kaso","riskxlabs","vision","mcm","xwallet"], description: "Project to focus" },
+        autofade: { type: "number", description: "Seconds before auto-dismissing focus. 0 = stay until manually cleared." }
+      },
+      required: ["project"]
+    }
+  },
+  {
+    name: "focus_memory",
+    description: "Activate a specific memory module hexagon in Orchestrator mode. Use when referencing a specific memory module (M1-M8).",
+    input_schema: {
+      type: "object",
+      properties: {
+        module: { type: "string", enum: ["m1","m2","m3","m4","m5","m6","m7","m8"], description: "Memory module to highlight" },
+        autofade: { type: "number", description: "Seconds before auto-dismissing. 0 = stay." }
+      },
+      required: ["module"]
+    }
+  },
+  {
+    name: "clear_focus",
+    description: "Clear all focused projects and memory modules, returning to the default orchestrator view.",
+    input_schema: { type: "object", properties: {} }
+  },
+
   // ── Weather ───────────────────────────────────────────────────────────────
   { name:"get_weather", description:"Get LIVE weather data from NOAA. 'local' for The Colony TX, 'national' for major cities.", input_schema:{type:"object",properties:{scope:{type:"string",enum:["local","national"]}}}},
 
