@@ -311,6 +311,12 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify(result);
     }
 
+    // ── Orchestrator mode ─────────────────────────────────────────────────────
+    case "set_sphere_mode": {
+      ctx.setSphereMode(input.mode || "briefing");
+      return JSON.stringify({ ok: true, sphereMode: input.mode });
+    }
+
     // ── Memory write ──────────────────────────────────────────────────────────
     case "save_memory": {
       // D1 write is handled server-side in chat.js
@@ -611,6 +617,17 @@ function ConversationPanel({ messages, highlighted }) {
 
 export default function JarvisBriefing() {
   const [mode, setMode] = useState("idle");
+  const [sphereMode, setSphereMode] = useState("briefing"); // "briefing" | "orchestrator"
+
+  // Project box refs — sphere draws neurons to these DOM elements
+  const projectRefs = {
+    tania:     useRef(null),
+    kaso:      useRef(null),
+    riskxlabs: useRef(null),
+    vision:    useRef(null),
+    mcm:       useRef(null),
+    xwallet:   useRef(null),
+  };
   const [holoCommand, setHoloCommand] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [researchCommand, setResearchCommand] = useState(null);
@@ -792,6 +809,7 @@ export default function JarvisBriefing() {
             setActiveWatchlistName: (name) => { setActiveWatchlistName(name); lsSaveActive(name); },
             updateWatchlists, refreshActiveWatchlist,
             musicController,
+            setSphereMode,
           });
           return { type: "tool_result", tool_use_id: tb.id, content: result };
         })
@@ -878,6 +896,16 @@ export default function JarvisBriefing() {
           <span className="opacity-60">{dateStr}</span>
           <span style={{ color: "#7DD3FC" }} className="tabular-nums">{timeStr}<span style={{ animation: "blink 1s steps(1) infinite" }}>:</span></span>
           <button onClick={() => setCalendarOpen(true)} className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all" style={{ border: "1px solid #7DD3FC44", color: "#7DD3FC88", background: "transparent" }}>📅 CALENDAR</button>
+          <button
+            onClick={() => setSphereMode(m => m === "orchestrator" ? "briefing" : "orchestrator")}
+            className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
+            style={{
+              border: sphereMode === "orchestrator" ? "1px solid #c9a84c" : "1px solid #c9a84c44",
+              color: sphereMode === "orchestrator" ? "#c9a84c" : "#c9a84c88",
+              background: sphereMode === "orchestrator" ? "rgba(201,168,76,0.1)" : "transparent",
+              boxShadow: sphereMode === "orchestrator" ? "0 0 12px rgba(201,168,76,0.3)" : "none",
+            }}
+          >⬡ {sphereMode === "orchestrator" ? "BRIEFING" : "ORCHESTRATOR"}</button>
           <span className="opacity-50">SYS.{MODE_LABELS[mode]}</span>
         </div>
       </div>
@@ -897,7 +925,15 @@ export default function JarvisBriefing() {
             <div className="absolute -top-px -right-px w-3 h-3 border-t border-r" style={{ borderColor: "#7DD3FC" }} />
             <div className="absolute -bottom-px -left-px w-3 h-3 border-b border-l" style={{ borderColor: "#7DD3FC" }} />
             <div className="absolute -bottom-px -right-px w-3 h-3 border-b border-r" style={{ borderColor: "#7DD3FC" }} />
-            <div style={{ height: "320px", position: "relative" }}><JarvisSphere mode={mode} /></div>
+            <div style={{ position: "relative", height: "320px" }}>
+              <JarvisSphere
+                mode={mode}
+                sphereMode={sphereMode}
+                projectRefs={projectRefs}
+              />
+
+
+            </div>
             {interimTranscript && <div className="px-4 pb-2 text-center text-[11px] italic opacity-70" style={{ color: "#7DD3FC" }}>"{interimTranscript}"</div>}
             {voiceError && <div className="px-4 pb-2 text-center text-[10px]" style={{ color: "#FB7185" }}>{voiceError}</div>}
             <div className="flex flex-wrap gap-2 justify-center pb-5 px-4">
@@ -934,6 +970,158 @@ export default function JarvisBriefing() {
           />
         </div>
       </div>
+
+      {/* ── Full-screen Orchestrator Overlay ─────────────────────────────────── */}
+      {sphereMode === "orchestrator" && (
+        <div className="fixed inset-0 z-40 flex flex-col"
+          style={{ background:"radial-gradient(ellipse at center, #0B1626 0%, #020617 100%)" }}>
+          <div className="absolute inset-0 pointer-events-none" style={{
+            backgroundImage:`linear-gradient(rgba(201,168,76,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(201,168,76,0.025) 1px,transparent 1px)`,
+            backgroundSize:"48px 48px",
+          }} />
+
+          {/* Top bar */}
+          <div className="flex items-center justify-between px-6 py-2.5 flex-shrink-0 border-b z-10"
+            style={{ borderColor:"rgba(201,168,76,0.15)", background:"rgba(2,4,8,0.92)" }}>
+            <div style={{ color:"#c9a84c", fontSize:"11px", letterSpacing:"0.3em", fontFamily:"ui-monospace,monospace" }}>
+              J·A·R·V·I·S
+            </div>
+            <div className="flex items-center gap-2">
+              {["ONLINE","SECURE","ENCRYPTED","AUTH-LV9"].map(label=>(
+                <div key={label} className="flex items-center gap-1 px-2 py-1"
+                  style={{ border:"1px solid rgba(201,168,76,0.18)", fontSize:"7px", letterSpacing:"0.12em", color:"rgba(201,168,76,0.5)" }}>
+                  <span style={{ width:4,height:4,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 4px #22c55e",display:"inline-block" }} />
+                  {label}
+                </div>
+              ))}
+              <div className="px-3 py-1"
+                style={{ border:"1px solid rgba(201,168,76,0.5)",color:"#c9a84c",fontSize:"7.5px",letterSpacing:"0.15em",background:"rgba(201,168,76,0.06)",boxShadow:"0 0 10px rgba(201,168,76,0.2)" }}>
+                ⬡ ORCHESTRATOR
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <span style={{ color:"#c9a84c",fontSize:"12px",letterSpacing:"0.12em",fontFamily:"ui-monospace,monospace" }}>
+                {now.toLocaleTimeString("en-US",{hour12:false})}
+              </span>
+              <button onClick={() => setSphereMode("briefing")}
+                className="px-4 py-1.5 text-[9px] tracking-[0.25em]"
+                style={{ border:"1px solid #FB7185",color:"#FB7185",background:"rgba(251,113,133,0.08)" }}>
+                ✕ BRIEFING
+              </button>
+            </div>
+          </div>
+
+          {/* Main area */}
+          <div className="flex-1 relative overflow-hidden">
+            {/* Left panel */}
+            <div className="absolute left-4 top-5 z-10" style={{ width:130 }}>
+              <div style={{ fontSize:"7px",letterSpacing:"0.25em",color:"rgba(201,168,76,0.4)",marginBottom:8 }}>{"{ SYSTEM VITALS"}</div>
+              {[["NEURAL CORE","37%",37],["MEMORY","65%",65],["LATENCY","10ms",18],["SIGNAL","94%",94],["THROUGHPUT","1.5GB/s",58]].map(([n,v,p])=>(
+                <div key={n} style={{ marginBottom:5 }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",marginBottom:2 }}>
+                    <span style={{ fontSize:"7px",color:"rgba(201,168,76,0.3)" }}>{n}</span>
+                    <span style={{ fontSize:"7px",color:"#c9a84c" }}>{v}</span>
+                  </div>
+                  <div style={{ height:"1.5px",background:"rgba(201,168,76,0.08)",borderRadius:1 }}>
+                    <div style={{ height:"100%",width:`${p}%`,background:"linear-gradient(90deg,rgba(201,168,76,0.5),#c9a84c)",borderRadius:1 }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Right panel */}
+            <div className="absolute right-4 top-5 z-10 text-right" style={{ width:150 }}>
+              <div style={{ fontSize:"7px",letterSpacing:"0.25em",color:"rgba(201,168,76,0.4)",marginBottom:8 }}>{"DIAGNOSTICS }"}</div>
+              {["vector.query","tokenizer run","cache acquired","whisper decode","kv.sync ok","audio.stream","memory.recall"].map(log=>(
+                <div key={log} style={{ fontSize:"6.5px",color:"rgba(201,168,76,0.2)",marginBottom:3 }}>
+                  <span style={{ color:"rgba(201,168,76,0.4)" }}>OK</span> {log}
+                </div>
+              ))}
+            </div>
+
+            {/* Sphere — centered, full size */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <div style={{ width:"min(52vh,52vw)",height:"min(52vh,52vw)",position:"relative" }}>
+                <JarvisSphere mode={mode} sphereMode="orchestrator" projectRefs={projectRefs} />
+              </div>
+            </div>
+
+            {/* Project boxes */}
+            <div ref={projectRefs.tania} className="absolute z-10"
+              style={{ top:"8%",left:"16%",border:"1px solid rgba(201,168,76,0.35)",background:"rgba(201,168,76,0.04)",
+                color:"#c9a84c",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
+              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(201,168,76,0.4)"}
+              onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+              <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
+                <span style={{ width:5,height:5,borderRadius:"50%",background:"#c9a84c",boxShadow:"0 0 5px #c9a84c",display:"inline-block" }} />
+                Taste of Tania
+              </div>
+              <div style={{ opacity:0.5,fontSize:"6.5px" }}>Scripts · 2 pending</div>
+              <div style={{ opacity:0.5,fontSize:"6.5px",marginTop:1 }}>Agent · Active</div>
+            </div>
+
+            <div ref={projectRefs.kaso} className="absolute z-10"
+              style={{ top:"8%",right:"16%",border:"1px solid rgba(59,130,246,0.35)",background:"rgba(59,130,246,0.04)",
+                color:"#3b82f6",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
+              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(59,130,246,0.4)"}
+              onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+              <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
+                <span style={{ width:5,height:5,borderRadius:"50%",background:"#3b82f6",boxShadow:"0 0 5px #3b82f6",display:"inline-block" }} />
+                KASO
+              </div>
+              <div style={{ opacity:0.5,fontSize:"6.5px" }}>Sprint ready</div>
+              <div style={{ opacity:0.5,fontSize:"6.5px",marginTop:1 }}>RiskxLabs</div>
+            </div>
+
+            <div ref={projectRefs.mcm} className="absolute z-10"
+              style={{ top:"42%",left:"3%",border:"1px solid rgba(42,58,80,0.3)",background:"transparent",
+                color:"#2a3a50",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,opacity:0.45 }}>
+              <div style={{ fontWeight:500,marginBottom:3 }}>MCM</div>
+              <div style={{ opacity:0.55,fontSize:"6.5px" }}>Periodic Table Dow</div>
+              <div style={{ opacity:0.55,fontSize:"6.5px",marginTop:1 }}>Inactive</div>
+            </div>
+
+            <div ref={projectRefs.xwallet} className="absolute z-10"
+              style={{ top:"42%",right:"3%",border:"1px solid rgba(42,58,80,0.3)",background:"transparent",
+                color:"#2a3a50",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,opacity:0.45 }}>
+              <div style={{ fontWeight:500,marginBottom:3 }}>Xwallet</div>
+              <div style={{ opacity:0.55,fontSize:"6.5px" }}>Crypto Wallet</div>
+              <div style={{ opacity:0.55,fontSize:"6.5px",marginTop:1 }}>Inactive</div>
+            </div>
+
+            <div ref={projectRefs.riskxlabs} className="absolute z-10"
+              style={{ bottom:"10%",right:"16%",border:"1px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.04)",
+                color:"#ef4444",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
+              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(239,68,68,0.4)"}
+              onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
+              <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
+                <span style={{ width:5,height:5,borderRadius:"50%",background:"#ef4444",boxShadow:"0 0 5px #ef4444",display:"inline-block" }} />
+                RiskxLabs
+              </div>
+              <div style={{ opacity:0.5,fontSize:"6.5px" }}>Mission layer</div>
+              <div style={{ opacity:0.5,fontSize:"6.5px",marginTop:1 }}>Parent · Active</div>
+            </div>
+
+            <div ref={projectRefs.vision} className="absolute z-10"
+              style={{ bottom:"10%",left:"16%",border:"1px solid rgba(42,58,80,0.3)",background:"transparent",
+                color:"#2a3a50",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,opacity:0.45 }}>
+              <div style={{ fontWeight:500,marginBottom:3 }}>Vision</div>
+              <div style={{ opacity:0.55,fontSize:"6.5px" }}>Blockchain Explorer</div>
+              <div style={{ opacity:0.55,fontSize:"6.5px",marginTop:1 }}>Inactive</div>
+            </div>
+
+            {/* State label */}
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
+              <div style={{ fontSize:"9px",letterSpacing:"0.4em",color:"#c9a84c",marginBottom:2 }}>
+                {MODE_LABELS[mode]}
+              </div>
+              <div style={{ fontSize:"6.5px",letterSpacing:"0.2em",color:"rgba(201,168,76,0.3)" }}>
+                — ORCHESTRATOR ONLINE —
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <CalendarPanel isOpen={calendarOpen} onClose={() => setCalendarOpen(false)} externalCommand={calendarCommand} />
 
