@@ -7,6 +7,7 @@ import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
 import SatellitePanel from "./SatellitePanel.jsx";
 import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
 import { useElevenLabsSpeak, useWakeWord, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
+import JarvisSphere from "./JarvisSphere.jsx";
 
 const MODE_LABELS = {
   idle: "STANDBY",
@@ -14,133 +15,6 @@ const MODE_LABELS = {
   thinking: "PROCESSING",
   speaking: "RESPONDING",
 };
-
-function AudioRing({ active, intensity = 1, bars = 64, color = "#7DD3FC" }) {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    if (!active) return;
-    let raf;
-    const loop = () => { setTick((t) => t + 1); raf = requestAnimationFrame(loop); };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [active]);
-  const radius = 110;
-  const items = [];
-  for (let i = 0; i < bars; i++) {
-    const angle = (i / bars) * Math.PI * 2;
-    const seed = i * 0.7;
-    const wave = Math.sin(tick * 0.06 + seed) * 0.5 + Math.sin(tick * 0.13 + seed * 2.1) * 0.3 + Math.sin(tick * 0.21 + seed * 0.5) * 0.2;
-    const amp = active ? (0.5 + wave * 0.5) * intensity : 0.15;
-    const len = 4 + amp * 22;
-    const x1 = Math.cos(angle) * radius, y1 = Math.sin(angle) * radius;
-    const x2 = Math.cos(angle) * (radius + len), y2 = Math.sin(angle) * (radius + len);
-    items.push(<line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity={0.4 + amp * 0.6} />);
-  }
-  return <g>{items}</g>;
-}
-
-function RotatingArc({ radius, duration, reverse = false, segments = [[0, 60], [120, 30], [200, 80], [310, 20]], strokeWidth = 1.5, color = "#7DD3FC", opacity = 0.8 }) {
-  return (
-    <g style={{ transformOrigin: "center", animation: `${reverse ? "spinReverse" : "spin"} ${duration}s linear infinite` }}>
-      {segments.map(([start, length], i) => {
-        const circumference = 2 * Math.PI * radius;
-        const dash = (length / 360) * circumference;
-        const gap = circumference - dash;
-        const offset = -((start / 360) * circumference);
-        return <circle key={i} cx="0" cy="0" r={radius} fill="none" stroke={color} strokeWidth={strokeWidth} strokeDasharray={`${dash} ${gap}`} strokeDashoffset={offset} opacity={opacity} strokeLinecap="round" />;
-      })}
-    </g>
-  );
-}
-
-function TickRing({ radius, count, length = 4, color = "#7DD3FC", opacity = 0.5 }) {
-  const ticks = [];
-  for (let i = 0; i < count; i++) {
-    const angle = (i / count) * 360;
-    ticks.push(<line key={i} x1="0" y1={-radius} x2="0" y2={-radius - length} stroke={color} strokeWidth="1" opacity={opacity} transform={`rotate(${angle})`} />);
-  }
-  return <g>{ticks}</g>;
-}
-
-function CornerBrackets({ size = 180, color = "#7DD3FC", opacity = 0.6 }) {
-  const len = 18;
-  const corners = [
-    { x: -size, y: -size, dx: 1, dy: 1 }, { x: size, y: -size, dx: -1, dy: 1 },
-    { x: -size, y: size, dx: 1, dy: -1 }, { x: size, y: size, dx: -1, dy: -1 },
-  ];
-  return (
-    <g opacity={opacity}>
-      {corners.map((c, i) => (
-        <g key={i}>
-          <line x1={c.x} y1={c.y} x2={c.x + c.dx * len} y2={c.y} stroke={color} strokeWidth="1.5" />
-          <line x1={c.x} y1={c.y} x2={c.x} y2={c.y + c.dy * len} stroke={color} strokeWidth="1.5" />
-        </g>
-      ))}
-    </g>
-  );
-}
-
-function OrbitingParticles({ active, color = "#7DD3FC" }) {
-  if (!active) return null;
-  const particles = [
-    { r: 95, dur: 4, size: 2, delay: 0 }, { r: 95, dur: 4, size: 1.5, delay: -1.3 },
-    { r: 95, dur: 4, size: 2.5, delay: -2.6 }, { r: 130, dur: 6, size: 1.5, delay: 0 },
-    { r: 130, dur: 6, size: 2, delay: -3 }, { r: 75, dur: 3, size: 1.5, delay: 0 },
-    { r: 75, dur: 3, size: 1, delay: -1.5 },
-  ];
-  return (
-    <>
-      {particles.map((p, i) => (
-        <g key={i} style={{ transformOrigin: "center", animation: `spin ${p.dur}s linear infinite`, animationDelay: `${p.delay}s` }}>
-          <circle cx={p.r} cy="0" r={p.size} fill={color} style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
-        </g>
-      ))}
-    </>
-  );
-}
-
-function JarvisCore({ mode }) {
-  const colors = { idle: "#94A3B8", listening: "#7DD3FC", thinking: "#A78BFA", speaking: "#67E8F9" };
-  const color = colors[mode];
-  return (
-    <div className="relative w-full aspect-square">
-      <div className="absolute inset-0 pointer-events-none" style={{ background: `radial-gradient(circle at center, ${color}22 0%, transparent 55%)`, transition: "background 600ms ease" }} />
-      {(mode === "thinking" || mode === "listening") && (
-        <div className="absolute left-1/2 -translate-x-1/2 top-1/2 w-72 h-[2px] pointer-events-none" style={{ background: `linear-gradient(90deg, transparent, ${color}, transparent)`, animation: "scanline 3s linear infinite", filter: `drop-shadow(0 0 6px ${color})` }} />
-      )}
-      <svg viewBox="-200 -200 400 400" className="absolute inset-0 w-full h-full" style={{ animation: "flicker 4s ease-in-out infinite" }}>
-        <defs>
-          <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor={color} stopOpacity="0.35" />
-            <stop offset="60%" stopColor={color} stopOpacity="0.05" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
-          </radialGradient>
-          <radialGradient id="innerCore" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#020617" />
-            <stop offset="80%" stopColor="#020617" />
-            <stop offset="100%" stopColor={color} stopOpacity="0.3" />
-          </radialGradient>
-        </defs>
-        <CornerBrackets size={170} color={color} opacity={0.4} />
-        <CornerBrackets size={150} color={color} opacity={0.25} />
-        <g style={{ transformOrigin: "center", animation: mode === "thinking" ? "spin 30s linear infinite" : mode === "speaking" ? "spin 60s linear infinite" : "none" }}>
-          <TickRing radius={140} count={48} length={6} color={color} opacity={0.4} />
-        </g>
-        <circle cx="0" cy="0" r="120" fill="url(#coreGlow)" />
-        <RotatingArc radius={155} duration={mode === "thinking" ? 8 : 24} color={color} opacity={0.5} segments={[[0, 40], [180, 40]]} />
-        <RotatingArc radius={140} duration={mode === "thinking" ? 6 : 18} reverse color={color} opacity={0.35} segments={[[20, 25], [120, 15], [220, 35], [320, 20]]} strokeWidth={1} />
-        {(mode === "listening" || mode === "speaking") && <AudioRing active intensity={mode === "speaking" ? 1.2 : 0.85} color={color} />}
-        <circle cx="0" cy="0" r="100" fill="none" stroke={color} strokeWidth="2.5" opacity="0.9" style={{ filter: `drop-shadow(0 0 8px ${color})`, animation: mode === "idle" ? "corePulse 3s ease-in-out infinite" : "none" }} />
-        <RotatingArc radius={90} duration={mode === "thinking" ? 2 : mode === "idle" ? 30 : 12} color={color} opacity={0.7} segments={mode === "thinking" ? [[0, 80], [120, 60], [240, 70]] : [[0, 30], [180, 30]]} strokeWidth={1.5} />
-        <OrbitingParticles active={mode === "thinking"} color={color} />
-        <circle cx="0" cy="0" r="78" fill="url(#innerCore)" />
-        <circle cx="0" cy="0" r="78" fill="none" stroke={color} strokeWidth="1" opacity="0.5" />
-        <text x="0" y="6" textAnchor="middle" fill={color} fontSize="22" fontFamily="ui-monospace, 'SF Mono', monospace" fontWeight="300" letterSpacing="6" style={{ filter: `drop-shadow(0 0 4px ${color})`, animation: mode === "thinking" ? "thinkingPulse 1.2s ease-in-out infinite" : "none" }}>JARVIS</text>
-        <circle cx="0" cy="-22" r="1.5" fill={color} opacity="0.8" />
-      </svg>
-    </div>
-  );
-}
 
 function Panel({ title, code, children, accent = "#7DD3FC", highlighted = false, panelKey }) {
   const glowColor = highlighted ? "#FBBF24" : accent;
@@ -991,7 +865,7 @@ export default function JarvisBriefing() {
             <div className="absolute -top-px -right-px w-3 h-3 border-t border-r" style={{ borderColor: "#7DD3FC" }} />
             <div className="absolute -bottom-px -left-px w-3 h-3 border-b border-l" style={{ borderColor: "#7DD3FC" }} />
             <div className="absolute -bottom-px -right-px w-3 h-3 border-b border-r" style={{ borderColor: "#7DD3FC" }} />
-            <div className="px-4 pt-4 pb-2 max-w-md mx-auto"><JarvisCore mode={mode} /></div>
+            <div style={{ height: "320px", position: "relative" }}><JarvisSphere mode={mode} /></div>
             {interimTranscript && <div className="px-4 pb-2 text-center text-[11px] italic opacity-70" style={{ color: "#7DD3FC" }}>"{interimTranscript}"</div>}
             {voiceError && <div className="px-4 pb-2 text-center text-[10px]" style={{ color: "#FB7185" }}>{voiceError}</div>}
             <div className="flex flex-wrap gap-2 justify-center pb-5 px-4">
