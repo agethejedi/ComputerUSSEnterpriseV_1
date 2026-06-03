@@ -641,16 +641,6 @@ export default function JarvisBriefing() {
 
   // Sphere imperative ref — for focusProject / focusMem
   const sphereRef = useRef(null);
-
-  // Project box refs — sphere draws neurons to these DOM elements
-  const projectRefs = {
-    tania:     useRef(null),
-    kaso:      useRef(null),
-    riskxlabs: useRef(null),
-    vision:    useRef(null),
-    mcm:       useRef(null),
-    xwallet:   useRef(null),
-  };
   const [holoCommand, setHoloCommand] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [researchCommand, setResearchCommand] = useState(null);
@@ -954,7 +944,6 @@ export default function JarvisBriefing() {
                 ref={sphereRef}
                 mode={mode}
                 sphereMode={sphereMode}
-                projectRefs={projectRefs}
               />
 
 
@@ -1064,84 +1053,21 @@ export default function JarvisBriefing() {
               ))}
             </div>
 
-            {/* Sphere — centered, full size */}
+            {/* Sphere fills the space — project boxes + hexes drawn on canvas */}
             <div className="absolute inset-0 flex items-center justify-center">
-              <div style={{ width:"min(52vh,52vw)",height:"min(52vh,52vw)",position:"relative" }}>
-<JarvisSphere ref={sphereRef} mode={mode} sphereMode="orchestrator" projectRefs={projectRefs} />
+              <div style={{ width:"min(88vh,88vw)", height:"min(88vh,88vw)", position:"relative" }}>
+                <JarvisSphere
+                  ref={sphereRef}
+                  mode={mode}
+                  sphereMode="orchestrator"
+                />
               </div>
             </div>
 
-            {/* Project boxes */}
-            <div ref={projectRefs.tania} className="absolute z-10"
-              style={{ top:"8%",left:"16%",border:"1px solid rgba(201,168,76,0.35)",background:"rgba(201,168,76,0.04)",
-                color:"#c9a84c",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
-              onClick={() => sphereRef.current?.toggleProject("tania")}
-              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(201,168,76,0.4)"}
-              onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-              <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
-                <span style={{ width:5,height:5,borderRadius:"50%",background:"#c9a84c",boxShadow:"0 0 5px #c9a84c",display:"inline-block" }} />
-                Taste of Tania
-              </div>
-              <div style={{ opacity:0.5,fontSize:"6.5px" }}>Scripts · 2 pending</div>
-              <div style={{ opacity:0.5,fontSize:"6.5px",marginTop:1 }}>Agent · Active</div>
-            </div>
-
-            <div ref={projectRefs.kaso} className="absolute z-10"
-              style={{ top:"8%",right:"16%",border:"1px solid rgba(59,130,246,0.35)",background:"rgba(59,130,246,0.04)",
-                color:"#3b82f6",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
-              onClick={() => sphereRef.current?.toggleProject("kaso")}
-              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(59,130,246,0.4)"}
-              onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-              <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
-                <span style={{ width:5,height:5,borderRadius:"50%",background:"#3b82f6",boxShadow:"0 0 5px #3b82f6",display:"inline-block" }} />
-                KASO
-              </div>
-              <div style={{ opacity:0.5,fontSize:"6.5px" }}>Sprint ready</div>
-              <div style={{ opacity:0.5,fontSize:"6.5px",marginTop:1 }}>RiskxLabs</div>
-            </div>
-
-            <div ref={projectRefs.mcm} className="absolute z-10"
-              style={{ top:"42%",left:"3%",border:"1px solid rgba(42,58,80,0.3)",background:"transparent",
-                color:"#2a3a50",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,opacity:0.45 }}>
-              <div style={{ fontWeight:500,marginBottom:3 }}>MCM</div>
-              <div style={{ opacity:0.55,fontSize:"6.5px" }}>Periodic Table Dow</div>
-              <div style={{ opacity:0.55,fontSize:"6.5px",marginTop:1 }}>Inactive</div>
-            </div>
-
-            <div ref={projectRefs.xwallet} className="absolute z-10"
-              style={{ top:"42%",right:"3%",border:"1px solid rgba(42,58,80,0.3)",background:"transparent",
-                color:"#2a3a50",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,opacity:0.45 }}>
-              <div style={{ fontWeight:500,marginBottom:3 }}>Xwallet</div>
-              <div style={{ opacity:0.55,fontSize:"6.5px" }}>Crypto Wallet</div>
-              <div style={{ opacity:0.55,fontSize:"6.5px",marginTop:1 }}>Inactive</div>
-            </div>
-
-            <div ref={projectRefs.riskxlabs} className="absolute z-10"
-              style={{ bottom:"10%",right:"16%",border:"1px solid rgba(239,68,68,0.35)",background:"rgba(239,68,68,0.04)",
-                color:"#ef4444",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,cursor:"pointer" }}
-              onClick={() => sphereRef.current?.toggleProject("riskxlabs")}
-              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 16px rgba(239,68,68,0.4)"}
-              onMouseLeave={e=>e.currentTarget.style.boxShadow="none"}>
-              <div style={{ fontWeight:500,marginBottom:3,display:"flex",alignItems:"center",gap:5 }}>
-                <span style={{ width:5,height:5,borderRadius:"50%",background:"#ef4444",boxShadow:"0 0 5px #ef4444",display:"inline-block" }} />
-                RiskxLabs
-              </div>
-              <div style={{ opacity:0.5,fontSize:"6.5px" }}>Mission layer</div>
-              <div style={{ opacity:0.5,fontSize:"6.5px",marginTop:1 }}>Parent · Active</div>
-            </div>
-
-            <div ref={projectRefs.vision} className="absolute z-10"
-              style={{ bottom:"10%",left:"16%",border:"1px solid rgba(42,58,80,0.3)",background:"transparent",
-                color:"#2a3a50",padding:"8px 12px",borderRadius:3,fontSize:"8px",letterSpacing:"0.1em",minWidth:100,opacity:0.45 }}>
-              <div style={{ fontWeight:500,marginBottom:3 }}>Vision</div>
-              <div style={{ opacity:0.55,fontSize:"6.5px" }}>Blockchain Explorer</div>
-              <div style={{ opacity:0.55,fontSize:"6.5px",marginTop:1 }}>Inactive</div>
-            </div>
-
-            {/* Memory hex hint */}
+            {/* Hint */}
             <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
-              <div style={{ fontSize:"6.5px", letterSpacing:"0.2em", color:"rgba(201,168,76,0.2)" }}>
-                CLICK PROJECT OR MEMORY HEX TO ACTIVATE NEURONS
+              <div style={{ fontSize:"6.5px", letterSpacing:"0.2em", color:"rgba(201,168,76,0.18)" }}>
+                CLICK PROJECT BOX OR MEMORY HEX TO ACTIVATE NEURONS
               </div>
             </div>
 
