@@ -6,7 +6,7 @@ import FlightPanel from "./FlightPanel.jsx";
 import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
 import SatellitePanel from "./SatellitePanel.jsx";
 import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
-import { useElevenLabsSpeak, useWakeWord, useMultiWakeWord, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
+import { useElevenLabsSpeak, useWakeWord, useMultiWakeWord, pauseWakeWords, resumeWakeWords, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
 import TaniaPanel from "./TaniaPanel.jsx";
 import JarvisSphere from "./JarvisSphere.jsx";
 
@@ -839,10 +839,12 @@ export default function JarvisBriefing() {
 
   const startListening = useCallback(() => {
     if (isListeningRef.current) return;
-    unlockSpeech(); // unlock audio on user gesture — required for iOS/Android
+    unlockSpeech();
     setVoiceError(null);
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setVoiceError("Speech recognition not supported. Use Chrome, Edge, or Safari."); return; }
+    // Pause wake word session — mic belongs to command recognition now
+    pauseWakeWords();
     const recognition = new SR();
     recognition.continuous = false; recognition.interimResults = true; recognition.lang = "en-US";
     let finalTranscript = "";
@@ -854,16 +856,35 @@ export default function JarvisBriefing() {
       }
       setInterimTranscript(interim || finalTranscript);
     };
-    recognition.onerror = (event) => { if (event.error !== "aborted" && event.error !== "no-speech") setVoiceError(`Voice error: ${event.error}`); isListeningRef.current = false; setMode("idle"); };
+    recognition.onerror = (event) => {
+      if (event.error !== "aborted" && event.error !== "no-speech") setVoiceError(`Voice error: ${event.error}`);
+      isListeningRef.current = false; setMode("idle");
+      resumeWakeWords(); // give mic back to wake word session
+    };
     recognition.onend = () => {
       isListeningRef.current = false; setInterimTranscript("");
-      const text = finalTranscript.trim();
-      if (text) { setConversation((c) => [...c, { role: "user", display: text }]); sendToClaude(text); } else setMode("idle");
+      const text = finalTranscript.trim().toLowerCase();
+      const reserved = ["tania", "hey tania", "jarvis", "hey jarvis"];
+      if (text && reserved.includes(text)) {
+        setMode("idle");
+        resumeWakeWords();
+        return;
+      }
+      if (finalTranscript.trim()) {
+        setConversation((c) => [...c, { role: "user", display: finalTranscript.trim() }]);
+        sendToClaude(finalTranscript.trim());
+      } else {
+        setMode("idle");
+      }
+      resumeWakeWords(); // mic back to wake words after command processed
     };
     recognitionRef.current = recognition; isListeningRef.current = true; setMode("listening"); recognition.start();
   }, [sendToClaude, unlockSpeech]);
 
-  const stopListening = useCallback(() => { if (recognitionRef.current && isListeningRef.current) recognitionRef.current.stop(); }, []);
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current && isListeningRef.current) recognitionRef.current.stop();
+    // resumeWakeWords is called in recognition.onend above
+  }, []);
 
   // ── Single mic session — listens for both wake words simultaneously ───────
   // One recognition instance shared. No mic flashing from competing sessions.
@@ -875,7 +896,13 @@ export default function JarvisBriefing() {
     },
     {
       word: "tania",
-      onMatch: () => { unlockSpeech(); setTaniaOpen(true); },
+      onMatch: () => {
+        // Stop JARVIS listening immediately so "tania" isn't sent to /api/chat
+        if (isListeningRef.current) stopListening();
+        window.speechSynthesis?.cancel();
+        unlockSpeech();
+        setTaniaOpen(true);
+      },
       enabled: sphereMode === "orchestrator" && !taniaOpen,
     },
   ]);
