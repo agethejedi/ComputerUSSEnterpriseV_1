@@ -127,11 +127,12 @@ export function useElevenLabsSpeak() {
 // 2. WAKE WORD HOOK
 // ============================================================
 
-export function useWakeWord({ onWakeWord, enabled = true }) {
+export function useWakeWord({ onWakeWord, enabled = true, wakeWord = null }) {
   const recognitionRef = useRef(null);
   const enabledRef = useRef(enabled);
   const onWakeWordRef = useRef(onWakeWord);
-  const wakeWordRef = useRef("hey jarvis");
+  // If wakeWord prop provided, use it directly — skip config fetch
+  const wakeWordRef = useRef(wakeWord ? wakeWord.toLowerCase() : "hey jarvis");
   const restartTimerRef = useRef(null);
   const isMountedRef = useRef(true);
 
@@ -139,12 +140,17 @@ export function useWakeWord({ onWakeWord, enabled = true }) {
   useEffect(() => { onWakeWordRef.current = onWakeWord; }, [onWakeWord]);
 
   useEffect(() => {
+    // Only fetch config if no explicit wakeWord was provided
+    if (wakeWord) {
+      wakeWordRef.current = wakeWord.toLowerCase();
+      return () => { isMountedRef.current = false; };
+    }
     fetch("/api/config")
       .then((r) => r.json())
       .then((cfg) => { if (cfg.wakeWord) wakeWordRef.current = cfg.wakeWord.toLowerCase(); })
       .catch(() => {});
     return () => { isMountedRef.current = false; };
-  }, []);
+  }, [wakeWord]);
 
   const stopWakeWordListening = useCallback(() => {
     if (restartTimerRef.current) clearTimeout(restartTimerRef.current);

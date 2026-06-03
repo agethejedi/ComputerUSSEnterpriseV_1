@@ -7,6 +7,7 @@ import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
 import SatellitePanel from "./SatellitePanel.jsx";
 import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
 import { useElevenLabsSpeak, useWakeWord, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
+import TaniaPanel from "./TaniaPanel.jsx";
 import JarvisSphere from "./JarvisSphere.jsx";
 
 const MODE_LABELS = {
@@ -638,6 +639,7 @@ function ConversationPanel({ messages, highlighted }) {
 export default function JarvisBriefing() {
   const [mode, setMode] = useState("idle");
   const [sphereMode, setSphereMode] = useState("briefing"); // "briefing" | "orchestrator"
+  const [taniaOpen, setTaniaOpen] = useState(false);
 
   // Sphere imperative ref — for focusProject / focusMem
   const sphereRef = useRef(null);
@@ -863,10 +865,18 @@ export default function JarvisBriefing() {
 
   const stopListening = useCallback(() => { if (recognitionRef.current && isListeningRef.current) recognitionRef.current.stop(); }, []);
 
-  // ── Wake word — continuously listens for "hey jarvis" when idle ───────────
+  // ── JARVIS wake word — listens globally when idle ────────────────────────
   useWakeWord({
     onWakeWord: () => { unlockSpeech(); startListening(); },
     enabled: mode === "idle",
+  });
+
+  // ── Tania wake word — "tania", only active in Orchestrator Mode ──────────
+  // She's present when you're in her space. Say her name → workspace opens.
+  useWakeWord({
+    wakeWord: "tania",
+    onWakeWord: () => { unlockSpeech(); setTaniaOpen(true); },
+    enabled: sphereMode === "orchestrator" && !taniaOpen,
   });
 
   useEffect(() => {
@@ -944,6 +954,9 @@ export default function JarvisBriefing() {
                 ref={sphereRef}
                 mode={mode}
                 sphereMode={sphereMode}
+                onProjectClick={(key) => {
+                  if (key === "tania") setTaniaOpen(true);
+                }}
               />
 
 
@@ -1060,6 +1073,9 @@ export default function JarvisBriefing() {
                   ref={sphereRef}
                   mode={mode}
                   sphereMode="orchestrator"
+                  onProjectClick={(key) => {
+                    if (key === "tania") setTaniaOpen(true);
+                  }}
                 />
               </div>
             </div>
@@ -1067,7 +1083,7 @@ export default function JarvisBriefing() {
             {/* Hint */}
             <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
               <div style={{ fontSize:"6.5px", letterSpacing:"0.2em", color:"rgba(201,168,76,0.18)" }}>
-                CLICK PROJECT BOX OR MEMORY HEX TO ACTIVATE NEURONS
+                CLICK PROJECT BOX TO ACTIVATE NEURONS · DOUBLE-CLICK TO OPEN WORKSPACE
               </div>
             </div>
 
@@ -1083,6 +1099,8 @@ export default function JarvisBriefing() {
           </div>
         </div>
       )}
+
+      <TaniaPanel isOpen={taniaOpen} onClose={() => setTaniaOpen(false)} />
 
       <CalendarPanel isOpen={calendarOpen} onClose={() => setCalendarOpen(false)} externalCommand={calendarCommand} />
 
