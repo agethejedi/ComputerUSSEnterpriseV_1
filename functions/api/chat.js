@@ -140,7 +140,7 @@ const TOOLS = [
         module: {
           type: "string",
           enum: ["m4", "m5", "m6", "m7"],
-          description: "m4=portfolio/projects, m5=institutional knowledge, m6=ready room sessions, m7=Tania bible"
+          description: "m4=portfolio/projects, m5=institutional knowledge, m6=ready room sessions, m7=Tania operational context only (not creative work — that belongs to Tania)"
         },
         data: {
           type: "object",
@@ -308,10 +308,12 @@ async function loadMemoryContext(db) {
         m6.results.map(r => `[${r.session_date}] ${r.summary}`).join("\n\n"));
     }
     if (m7.results?.length) {
-      const taniaCats = ["identity","themes","voice","emotional_state","personality"];
+      // JARVIS gets operational Tania context only — NOT her creative record or private story sessions
+      // creative_work, relationships are Tania's private domain
+      const taniaCats = ["identity","themes","voice","emotional_state","personality","brand_aesthetic"];
       const relevant = m7.results.filter(r => taniaCats.includes(r.category));
       if (relevant.length) {
-        sections.push("## Tania — Story Bible\n\n" +
+        sections.push("## Tania — Project Context\n\n" +
           relevant.map(r => `[${r.category}] ${r.content}`).join("\n\n"));
       }
     }
