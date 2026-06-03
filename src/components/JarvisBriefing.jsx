@@ -6,7 +6,7 @@ import FlightPanel from "./FlightPanel.jsx";
 import TrafficCameraPanel from "./TrafficCameraPanel.jsx";
 import SatellitePanel from "./SatellitePanel.jsx";
 import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
-import { useElevenLabsSpeak, useWakeWord, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
+import { useElevenLabsSpeak, useWakeWord, useMultiWakeWord, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
 import TaniaPanel from "./TaniaPanel.jsx";
 import JarvisSphere from "./JarvisSphere.jsx";
 
@@ -865,19 +865,20 @@ export default function JarvisBriefing() {
 
   const stopListening = useCallback(() => { if (recognitionRef.current && isListeningRef.current) recognitionRef.current.stop(); }, []);
 
-  // ── JARVIS wake word — listens globally when idle ────────────────────────
-  useWakeWord({
-    onWakeWord: () => { unlockSpeech(); startListening(); },
-    enabled: mode === "idle",
-  });
-
-  // ── Tania wake word — "tania", only active in Orchestrator Mode ──────────
-  // She's present when you're in her space. Say her name → workspace opens.
-  useWakeWord({
-    wakeWord: "tania",
-    onWakeWord: () => { unlockSpeech(); setTaniaOpen(true); },
-    enabled: sphereMode === "orchestrator" && !taniaOpen,
-  });
+  // ── Single mic session — listens for both wake words simultaneously ───────
+  // One recognition instance shared. No mic flashing from competing sessions.
+  useMultiWakeWord([
+    {
+      word: "jarvis",
+      onMatch: () => { unlockSpeech(); startListening(); },
+      enabled: mode === "idle" && !taniaOpen,
+    },
+    {
+      word: "tania",
+      onMatch: () => { unlockSpeech(); setTaniaOpen(true); },
+      enabled: sphereMode === "orchestrator" && !taniaOpen,
+    },
+  ]);
 
   useEffect(() => {
     const onKeyDown = (e) => { const tag = document.activeElement?.tagName; if (e.code === "Space" && !e.repeat && tag !== "INPUT" && tag !== "TEXTAREA") { e.preventDefault(); if (mode === "idle") startListening(); } };

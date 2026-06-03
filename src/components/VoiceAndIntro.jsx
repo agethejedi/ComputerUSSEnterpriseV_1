@@ -124,46 +124,32 @@ export function useElevenLabsSpeak() {
 }
 
 // ============================================================
-// 2. WAKE WORD HOOK
+// 2. WAKE WORD HOOKS
 // ============================================================
+// useMultiWakeWord — single recognition session, multiple wake words.
+// Pass an array of { word, onMatch, enabled } objects.
+// Only ONE mic session runs regardless of how many wake words are registered.
+// This prevents the mic-flashing issue caused by concurrent recognition sessions.
+//
+// useWakeWord — legacy single-word wrapper around useMultiWakeWord.
 
-export function useWakeWord({ onWakeWord, enabled = true, wakeWord = null }) {
-  const recognitionRef = useRef(null);
-  const enabledRef = useRef(enabled);
-  const onWakeWordRef = useRef(onWakeWord);
-  // If wakeWord prop provided, use it directly — skip config fetch
-  const wakeWordRef = useRef(wakeWord ? wakeWord.toLowerCase() : "hey jarvis");
-  const restartTimerRef = useRef(null);
-  const isMountedRef = useRef(true);
+// Singleton recognition manager — one session shared across all wake words
+const wakeWordRegistry = {
+  listeners: [],           // { word, onMatch, enabled: ref }
+  recognition: null,
+  restartTimer: null,
+  isMounted: true,
 
-  useEffect(() => { enabledRef.current = enabled; }, [enabled]);
-  useEffect(() => { onWakeWordRef.current = onWakeWord; }, [onWakeWord]);
+  register(entry) {
+    this.listeners.push(entry);
+    this.ensureRunning();
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== entry);
+    };
+  },
 
-  useEffect(() => {
-    // Only fetch config if no explicit wakeWord was provided
-    if (wakeWord) {
-      wakeWordRef.current = wakeWord.toLowerCase();
-      return () => { isMountedRef.current = false; };
-    }
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then((cfg) => { if (cfg.wakeWord) wakeWordRef.current = cfg.wakeWord.toLowerCase(); })
-      .catch(() => {});
-    return () => { isMountedRef.current = false; };
-  }, [wakeWord]);
-
-  const stopWakeWordListening = useCallback(() => {
-    if (restartTimerRef.current) clearTimeout(restartTimerRef.current);
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch {}
-      recognitionRef.current = null;
-    }
-  }, []);
-
-  const startWakeWordListening = useCallback(() => {
-    if (!isMountedRef.current) return;
-    if (recognitionRef.current) return;
-
+  ensureRunning() {
+    if (this.recognition) return;
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
 
@@ -174,15 +160,21 @@ export function useWakeWord({ onWakeWord, enabled = true, wakeWord = null }) {
     recognition.maxAlternatives = 3;
 
     recognition.onresult = (event) => {
-      if (!enabledRef.current) return;
       for (let i = event.resultIndex; i < event.results.length; i++) {
         for (let j = 0; j < event.results[i].length; j++) {
           const transcript = event.results[i][j].transcript.toLowerCase().trim();
-          if (transcript.includes(wakeWordRef.current)) {
-            recognition.stop();
-            recognitionRef.current = null;
-            onWakeWordRef.current?.();
-            return;
+          // Check each registered wake word
+          for (const listener of this.listeners) {
+            if (!listener.enabled.current) continue;
+            if (transcript.includes(listener.word.current)) {
+              // Stop recognition, fire handler, restart after delay
+              recognition.stop();
+              this.recognition = null;
+              listener.onMatch.current?.();
+              // Restart after handler has had time to update state
+              this.restartTimer = setTimeout(() => this.ensureRunning(), 1200);
+              return;
+            }
           }
         }
       }
@@ -190,32 +182,110 @@ export function useWakeWord({ onWakeWord, enabled = true, wakeWord = null }) {
 
     recognition.onerror = (e) => {
       if (e.error === "not-allowed" || e.error === "service-not-allowed") return;
-      recognitionRef.current = null;
-      if (enabledRef.current && isMountedRef.current) {
-        restartTimerRef.current = setTimeout(startWakeWordListening, 3000);
+      this.recognition = null;
+      // Only restart if any listener is enabled
+      const anyEnabled = this.listeners.some(l => l.enabled.current);
+      if (anyEnabled) {
+        this.restartTimer = setTimeout(() => this.ensureRunning(), 3000);
       }
     };
 
     recognition.onend = () => {
-      recognitionRef.current = null;
-      if (enabledRef.current && isMountedRef.current) {
-        restartTimerRef.current = setTimeout(startWakeWordListening, 500);
+      this.recognition = null;
+      const anyEnabled = this.listeners.some(l => l.enabled.current);
+      if (anyEnabled) {
+        this.restartTimer = setTimeout(() => this.ensureRunning(), 500);
       }
     };
 
-    try { recognition.start(); recognitionRef.current = recognition; } catch {}
-  }, []);
+    try {
+      recognition.start();
+      this.recognition = recognition;
+    } catch {}
+  },
+
+  stop() {
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+    if (this.recognition) {
+      try { this.recognition.stop(); } catch {}
+      this.recognition = null;
+    }
+  },
+};
+
+// Multi-wake-word hook — registers with the singleton
+export function useMultiWakeWord(entries) {
+  // entries: [{ word, onMatch, enabled }]
+  const enabledRefs = useRef([]);
+  const wordRefs    = useRef([]);
+  const onMatchRefs = useRef([]);
+
+  // Sync refs on every render
+  entries.forEach((e, i) => {
+    if (!enabledRefs.current[i]) enabledRefs.current[i] = { current: e.enabled };
+    if (!wordRefs.current[i])    wordRefs.current[i]    = { current: e.word?.toLowerCase() || "" };
+    if (!onMatchRefs.current[i]) onMatchRefs.current[i] = { current: e.onMatch };
+    enabledRefs.current[i].current = e.enabled;
+    wordRefs.current[i].current    = e.word?.toLowerCase() || "";
+    onMatchRefs.current[i].current = e.onMatch;
+  });
 
   useEffect(() => {
-    if (enabled) {
-      const t = setTimeout(startWakeWordListening, 1000);
-      return () => { clearTimeout(t); stopWakeWordListening(); };
-    } else {
-      stopWakeWordListening();
-    }
-  }, [enabled, startWakeWordListening, stopWakeWordListening]);
+    const unregisters = entries.map((_, i) =>
+      wakeWordRegistry.register({
+        word:    wordRefs.current[i],
+        onMatch: onMatchRefs.current[i],
+        enabled: enabledRefs.current[i],
+      })
+    );
+    wakeWordRegistry.ensureRunning();
+    return () => {
+      unregisters.forEach(u => u());
+      // Stop recognition if no listeners remain
+      if (wakeWordRegistry.listeners.length === 0) {
+        wakeWordRegistry.stop();
+      }
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+}
 
-  useEffect(() => () => { isMountedRef.current = false; stopWakeWordListening(); }, [stopWakeWordListening]);
+// Legacy single-word hook — wraps useMultiWakeWord
+export function useWakeWord({ onWakeWord, enabled = true, wakeWord = null }) {
+  const wordRef    = useRef(wakeWord?.toLowerCase() || "hey jarvis");
+  const enabledRef = useRef(enabled);
+  const onMatchRef = useRef(onWakeWord);
+
+  // Sync refs
+  wordRef.current    = wakeWord?.toLowerCase() || wordRef.current;
+  enabledRef.current = enabled;
+  onMatchRef.current = onWakeWord;
+
+  useEffect(() => {
+    // Load from config if no explicit word given
+    if (!wakeWord) {
+      fetch("/api/config")
+        .then(r => r.json())
+        .then(cfg => { if (cfg.wakeWord) wordRef.current = cfg.wakeWord.toLowerCase(); })
+        .catch(() => {});
+    }
+  }, [wakeWord]);
+
+  useEffect(() => {
+    const unregister = wakeWordRegistry.register({
+      word:    wordRef,
+      onMatch: onMatchRef,
+      enabled: enabledRef,
+    });
+    wakeWordRegistry.ensureRunning();
+    return () => {
+      unregister();
+      if (wakeWordRegistry.listeners.length === 0) wakeWordRegistry.stop();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep enabled ref in sync on every render (registry reads it live)
+  enabledRef.current = enabled;
+  onMatchRef.current = onWakeWord;
 }
 
 // ============================================================
