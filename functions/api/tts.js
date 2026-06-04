@@ -31,8 +31,14 @@ export async function onRequestPost(context) {
     return new Response(JSON.stringify({ error: "text required" }), { status: 400, headers: { "Content-Type": "application/json", ...CORS } });
   }
 
-  // Truncate to 500 chars to stay within free tier (10k chars/month)
-  const truncated = text.slice(0, 500);
+  // Truncate at sentence boundary up to 2500 chars
+  // This prevents Tania's voice being cut mid-sentence
+  let truncated = text;
+  if (text.length > 2500) {
+    const cut = text.slice(0, 2500);
+    const lastSentence = cut.search(/[.!?][^.!?]*$/);
+    truncated = lastSentence > 0 ? cut.slice(0, lastSentence + 1) : cut;
+  }
 
   try {
     const controller = new AbortController();
