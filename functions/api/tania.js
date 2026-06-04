@@ -70,7 +70,7 @@ async function loadTaniaMemory(db) {
       storyCategories.forEach(cat => {
         if (byCategory[cat]?.length) {
           const label = cat.replace('_', ' ').toUpperCase();
-          sections.push(\`## \${label}\n\n\` + byCategory[cat].join("\n\n"));
+          sections.push("## " + label + "\n\n" + byCategory[cat].join("\n\n"));
         }
       });
       // Recent session logs — last 3
