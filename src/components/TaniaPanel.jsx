@@ -179,15 +179,57 @@ async function speakAsTania(text, voiceId = "knJcCBNKPnJDauT52tkc") {
       body: JSON.stringify({ text: text.slice(0, 2500), voiceId }),
     });
     if (!res.ok || !res.headers.get("content-type")?.includes("audio")) return;
-    const blob = await res.blob();
-    const url  = URL.createObjectURL(blob);
+    const arrayBuffer = await res.arrayBuffer();
+
+    // iOS: use shared AudioContext unlocked by JARVIS gesture
+    const actx = window._jarvisAudioCtx;
+    if (actx) {
+      try {
+        if (actx.state === "suspended") await actx.resume();
+        const decoded = await actx.decodeAudioData(arrayBuffer.slice(0));
+        const src = actx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(actx.destination);
+        await new Promise(resolve => { src.onended = resolve; src.start(0); });
+        return;
+      } catch {}
+    }
+
+    // Fallback: blob URL
+    const blob  = new Blob([arrayBuffer], { type: "audio/mpeg" });
+    const url   = URL.createObjectURL(blob);
     const audio = new Audio(url);
+    audio.playsInline = true;
     audio.onended = () => URL.revokeObjectURL(url);
     await audio.play();
   } catch {}
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
+// Auto-log session to M7 when workspace closes with meaningful content
+async function autoLogSession(messages) {
+  const userMessages = messages.filter(m => m.role === "ron");
+  if (userMessages.length < 2) return; // Not enough to log
+  const topics = userMessages
+    .slice(-4)
+    .map(m => m.content?.slice(0, 60))
+    .filter(Boolean)
+    .join(' | ');
+  try {
+    await fetch("/api/tania", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        logSession: {
+          summary: `Session covered: ${topics}`,
+          exchanges: userMessages.length,
+          keyMoments: [],
+        }
+      }),
+    });
+  } catch {}
+}
+
 export default function TaniaPanel({ isOpen, onClose }) {
   const [messages, setMessages]     = useState([]);
   const [drafts, setDrafts]         = useState([]);
@@ -198,6 +240,7 @@ export default function TaniaPanel({ isOpen, onClose }) {
   const apiMessagesRef              = useRef([]);
   const scrollRef                   = useRef(null);
   const inputRef                    = useRef(null);
+  const sessionStartRef             = useRef(Date.now());
   const [listening, setListening]   = useState(false);
   const recognitionRef              = useRef(null);
 
@@ -316,7 +359,6 @@ export default function TaniaPanel({ isOpen, onClose }) {
 
         if (draft) {
           setDrafts(prev => [...prev, { ...draft, id: Date.now() }]);
-          // Add a short message from Tania introducing the draft
           const intro = responseText.split(/VOICEOVER|Voiceover/i)[0].trim();
           if (intro) {
             setMessages(prev => [...prev, { role: "tania", content: intro, id: Date.now() }]);
@@ -327,7 +369,6 @@ export default function TaniaPanel({ isOpen, onClose }) {
         } else {
           setMessages(prev => [...prev, { role: "tania", content: responseText, id: Date.now() }]);
           setSpeaking(true);
-          // Speak full response
           await speakAsTania(responseText, data.voiceId);
           setSpeaking(false);
         }
