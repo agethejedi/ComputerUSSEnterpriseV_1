@@ -176,7 +176,7 @@ async function speakAsTania(text, voiceId = "knJcCBNKPnJDauT52tkc") {
     const res = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.slice(0, 400), voiceId }),
+      body: JSON.stringify({ text: text.slice(0, 2500), voiceId }),
     });
     if (!res.ok || !res.headers.get("content-type")?.includes("audio")) return;
     const blob = await res.blob();
@@ -327,9 +327,8 @@ export default function TaniaPanel({ isOpen, onClose }) {
         } else {
           setMessages(prev => [...prev, { role: "tania", content: responseText, id: Date.now() }]);
           setSpeaking(true);
-          // Speak first 2 sentences only
-          const spoken = responseText.split(/[.!?]/).slice(0, 2).join(". ").trim();
-          await speakAsTania(spoken || responseText, data.voiceId);
+          // Speak full response
+          await speakAsTania(responseText, data.voiceId);
           setSpeaking(false);
         }
       }
