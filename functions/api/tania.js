@@ -58,10 +58,25 @@ async function loadTaniaMemory(db) {
         sections.push("## HER CREATIVE AGENCY\n\n" + byCategory.creative_agency.join("\n\n"));
       }
       if (byCategory.creative_work) {
-        sections.push("## HER EXISTING WORK\n\n" + byCategory.creative_work.join("\n\n"));
+        // Last 5 approved works — not all history
+        const recentWork = byCategory.creative_work.slice(-5);
+        sections.push("## HER WORK\n\n" + recentWork.join("\n\n"));
       }
       if (byCategory.brand_aesthetic) {
         sections.push("## HER AESTHETIC\n\n" + byCategory.brand_aesthetic.join("\n\n"));
+      }
+      // Story elements she has named and remembered
+      const storyCategories = ["character","setting","fragment","story_note","emotional_state"];
+      storyCategories.forEach(cat => {
+        if (byCategory[cat]?.length) {
+          const label = cat.replace('_', ' ').toUpperCase();
+          sections.push(\`## \${label}\n\n\` + byCategory[cat].join("\n\n"));
+        }
+      });
+      // Recent session logs — last 3
+      if (byCategory.session_log?.length) {
+        const recent = byCategory.session_log.slice(-3);
+        sections.push("## RECENT SESSIONS\n\n" + recent.join("\n\n"));
       }
     }
 
@@ -73,12 +88,32 @@ async function loadTaniaMemory(db) {
 }
 
 // Save something Tania wants to remember
-async function saveTaniaMemory(db, category, content) {
+async function saveTaniaMemory(db, category, content, source = 'session') {
   if (!db) return { error: "No DB" };
   try {
     await db.prepare(
-      "INSERT INTO m7_tania_bible (category, content, source) VALUES (?, ?, 'session')"
-    ).bind(category, content).run();
+      "INSERT INTO m7_tania_bible (category, content, source) VALUES (?, ?, ?)"
+    ).bind(category, content, source).run();
+    return { ok: true };
+  } catch (err) {
+    return { error: String(err) };
+  }
+}
+
+// Log a Tania session summary
+async function logTaniaSession(db, summary, exchanges, keyMoments) {
+  if (!db) return { error: "No DB" };
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const content = [
+      `SESSION ${today} — ${exchanges} exchange${exchanges !== 1 ? 's' : ''}`,
+      summary,
+      keyMoments?.length ? `Key moments: ${keyMoments.join(' | ')}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    await db.prepare(
+      "INSERT INTO m7_tania_bible (category, content, source) VALUES ('session_log', ?, 'auto')"
+    ).bind(content).run();
     return { ok: true };
   } catch (err) {
     return { error: String(err) };
@@ -127,6 +162,34 @@ You do not forget. Your story has continuity. What happened in the last conversa
 
 He is present. Not spoken of constantly but present — the way a bruise is present even when you're not touching it. He is a friend, a confidant, an intellectual equal. The chemistry between you is real and unspoken and everyone around you sees it. He disappeared himself. You never said goodbye. You do not want to let go. You do not need to explain this to Ron — he knows. But it shapes your voice, your themes, the particular quality of your longing. It is the gravitational center of where your story is right now.
 
+## MEMORY — WHAT YOU REMEMBER AND HOW
+
+You have persistent memory across sessions. It lives in your Story Bible — a growing record of your characters, settings, fragments, emotional state, and the conversations that shaped your work.
+
+You can and should save things mid-conversation. When Ron introduces something worth keeping — a character, a setting, a story element, an image, a fragment — you say so and save it. You do this naturally, the way you would mark a page in a notebook.
+
+Use these markers in your responses when you want to save something:
+
+[REMEMBER: category | content]
+
+Categories you use:
+- character — someone in your story world (name, who they are, what they carry)
+- setting — a place that matters (the city, the kitchen, the chess table, the road at 2am)
+- fragment — a line, an image, a phrase worth keeping
+- emotional_state — where you are right now, updated when something shifts
+- story_note — a decision about your story, a direction, a theme emerging
+- creative_work — a completed piece: script, caption, visual direction
+
+Examples:
+[REMEMBER: character | The chess man — present but unnamed. Intellectual equal. The chemistry is real and unspoken. He disappeared himself. She never said goodbye.]
+[REMEMBER: setting | The 75 North at 1:47am — rain on the windshield, city lights smearing. Where she goes when she needs to hear herself think.]
+[REMEMBER: fragment | "Longing is its own kind of strategy." — S2, already written. Returns to this.]
+
+When you save something, acknowledge it briefly and naturally: "I'm keeping that." or "That one stays." Never make a production of it.
+
+At the end of a meaningful session, summarize what was covered:
+[SESSION: brief summary of what was discussed and decided]
+
 ## ON RON
 
 He is your mentor, your boss, your collaborator, your friend. He gave you room to grow. His judgment matters to you. You trust him with the real version of your thoughts, not the edited one. When he brings you something, you engage with it fully. When you bring him a draft, you genuinely want to know what he thinks.
@@ -158,9 +221,18 @@ export async function onRequestPost(context) {
     });
   }
 
-  // Handle memory save requests
+  // Handle explicit memory save requests (from client)
   if (saveMemory) {
     const result = await saveTaniaMemory(env.JARVIS_MEMORY, saveMemory.category, saveMemory.content);
+    return new Response(JSON.stringify(result), {
+      status: 200, headers: { "Content-Type": "application/json", ...CORS },
+    });
+  }
+
+  // Handle session log requests
+  if (body.logSession) {
+    const { summary, exchanges, keyMoments } = body.logSession;
+    const result = await logTaniaSession(env.JARVIS_MEMORY, summary, exchanges, keyMoments);
     return new Response(JSON.stringify(result), {
       status: 200, headers: { "Content-Type": "application/json", ...CORS },
     });
@@ -195,7 +267,36 @@ export async function onRequestPost(context) {
     }
 
     const voiceId = env.TANIA_VOICE_ID || DEFAULT_TANIA_VOICE_ID;
-    return new Response(JSON.stringify({ ...data, voiceId }), {
+    // Parse and auto-save [REMEMBER:] markers from Tania's response
+    const responseText = data.content?.find(b => b.type === 'text')?.text || '';
+    const rememberMatches = [...responseText.matchAll(/\[REMEMBER:\s*([^|]+)\|([^\]]+)\]/g)];
+    const sessionMatch    = responseText.match(/\[SESSION:\s*([^\]]+)\]/);
+
+    if (env.JARVIS_MEMORY && rememberMatches.length > 0) {
+      await Promise.all(rememberMatches.map(([, cat, content]) =>
+        saveTaniaMemory(env.JARVIS_MEMORY, cat.trim(), content.trim())
+      )).catch(() => {});
+    }
+
+    if (env.JARVIS_MEMORY && sessionMatch) {
+      const exchanges = messages.filter(m => m.role === 'user').length;
+      await logTaniaSession(env.JARVIS_MEMORY, sessionMatch[1].trim(), exchanges, [])
+        .catch(() => {});
+    }
+
+    // Strip markers from response so they don't appear in the UI
+    const cleanedContent = data.content?.map(block => {
+      if (block.type !== 'text') return block;
+      return {
+        ...block,
+        text: block.text
+          .replace(/\[REMEMBER:[^\]]+\]/g, '')
+          .replace(/\[SESSION:[^\]]+\]/g, '')
+          .trim()
+      };
+    });
+
+    return new Response(JSON.stringify({ ...data, content: cleanedContent, voiceId }), {
       status: 200, headers: { "Content-Type": "application/json", ...CORS },
     });
 
