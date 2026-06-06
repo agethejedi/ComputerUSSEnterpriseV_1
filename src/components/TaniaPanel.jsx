@@ -260,6 +260,86 @@ async function speakAsTania(text, voiceId = "knJcCBNKPnJDauT52tkc") {
   } catch {}
 }
 
+// ── Canvas file/paste handling ────────────────────────────────────────────────
+function useCanvasInput({ onSubmit, storybookId, episodeId }) {
+  const [items, setItems]       = useState([]); // { id, type, name, content, preview }
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef            = useRef(null);
+
+  const readFile = (file) => new Promise((resolve) => {
+    const type = file.type.startsWith("image/") ? "image"
+               : file.type.startsWith("audio/") ? "audio"
+               : file.type.startsWith("video/") ? "video"
+               : "file";
+    const reader = new FileReader();
+    if (type === "image") {
+      reader.onload = e => resolve({ type, name: file.name, content: e.target.result, preview: e.target.result, mimeType: file.type });
+    } else {
+      reader.onload = e => resolve({ type, name: file.name, content: e.target.result, mimeType: file.type });
+    }
+    type === "image" ? reader.readAsDataURL(file) : reader.readAsText(file);
+  });
+
+  const addFiles = async (files) => {
+    const newItems = await Promise.all([...files].map(readFile));
+    setItems(prev => [...prev, ...newItems.map(i => ({ ...i, id: Date.now() + Math.random() }))]);
+  };
+
+  const addText = (text) => {
+    if (!text.trim()) return;
+    const isLink = /^https?:\/\//i.test(text.trim());
+    setItems(prev => [...prev, {
+      id: Date.now(), type: isLink ? "link" : "text",
+      name: isLink ? text.trim().slice(0,40) : "Pasted text",
+      content: text.trim(),
+    }]);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setDragOver(false);
+    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+    else { const t = e.dataTransfer.getData("text"); if (t) addText(t); }
+  };
+
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items || [];
+    const files = [];
+    for (const item of items) {
+      if (item.kind === "file") files.push(item.getAsFile());
+    }
+    if (files.length) { e.preventDefault(); addFiles(files); return; }
+    // Text paste handled natively by textarea
+  };
+
+  const removeItem = (id) => setItems(prev => prev.filter(i => i.id !== id));
+
+  const submit = async (textNote) => {
+    const parts = [];
+    for (const item of items) {
+      // Save to artifacts table
+      await fetch("/api/tania?resource=artifacts_save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: item.name,
+          type: item.type,
+          content: item.type === "image" ? `[image: ${item.name}]` : item.content?.slice(0, 2000),
+          description: `Canvas submission`,
+          storybook_id: storybookId,
+          episode_id: episodeId,
+        }),
+      }).catch(() => {});
+      parts.push(`[${item.type.toUpperCase()}: ${item.name}]${item.type !== "image" ? "\n" + item.content?.slice(0, 500) : ""}`);
+    }
+    if (textNote?.trim()) parts.push(textNote.trim());
+    if (parts.length) onSubmit(parts.join("\n\n"));
+    setItems([]);
+    return true;
+  };
+
+  return { items, dragOver, setDragOver, handleDrop, handlePaste, addFiles, addText, removeItem, submit, fileInputRef };
+}
+
 // ── Session auto-log ──────────────────────────────────────────────────────────
 async function autoLogSession(messages, storybookId, episodeId) {
   const userMsgs = messages.filter(m => m.role === "ron");
@@ -300,6 +380,12 @@ export default function TaniaPanel({ isOpen, onClose }) {
   // Canvas
   const [canvasOpen, setCanvasOpen]   = useState(false);
   const [canvasText, setCanvasText]   = useState("");
+
+  const canvas = useCanvasInput({
+    onSubmit: (text) => send(text),
+    storybookId: activeStorybook?.id,
+    episodeId: activeEpisode?.id,
+  });
 
   // Edit character
   const [editingChar, setEditingChar] = useState(null);
@@ -423,12 +509,6 @@ export default function TaniaPanel({ isOpen, onClose }) {
 
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-  };
-
-  const submitCanvas = () => {
-    if (!canvasText.trim()) return;
-    send(`[Canvas submission] ${canvasText.trim()}`);
-    setCanvasText("");
   };
 
   const approveCharacter = async (id) => {
@@ -695,33 +775,104 @@ export default function TaniaPanel({ isOpen, onClose }) {
           </div>
 
           {canvasOpen && (
-            <div style={{ flex:1, overflowY:"auto", background:INK2 }}>
-              {/* Artifacts grid */}
-              <div style={{ padding:"10px" }}>
-                <div style={{ fontSize:8, letterSpacing:"0.24em", color:"rgba(167,139,250,0.28)", marginBottom:7 }}>ARTIFACTS</div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:5 }}>
-                  {artifacts.slice(0,4).map(a => (
-                    <div key={a.id} style={{ border:"0.5px solid rgba(167,139,250,0.14)", borderRadius:2, background:"rgba(167,139,250,0.03)", padding:"7px 6px", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}>
-                      <span style={{ fontSize:16 }}>{a.type==="image"?"🖼":a.type==="audio"?"🎵":a.type==="link"?"🔗":"📄"}</span>
-                      <span style={{ fontSize:7, color:"rgba(167,139,250,0.38)", textAlign:"center", lineHeight:1.3 }}>{a.name.slice(0,16)}</span>
+            <div style={{ flex:1, overflowY:"auto", background:INK2, display:"flex", flexDirection:"column" }}>
+
+              {/* Queued items */}
+              {canvas.items.length > 0 && (
+                <div style={{ padding:"8px 10px 0" }}>
+                  <div style={{ fontSize:8, letterSpacing:"0.22em", color:"rgba(167,139,250,0.35)", marginBottom:5 }}>QUEUED</div>
+                  {canvas.items.map(item => (
+                    <div key={item.id} style={{ display:"flex", alignItems:"center", gap:6, padding:"5px 6px", marginBottom:4, border:"0.5px solid rgba(167,139,250,0.15)", borderRadius:2, background:"rgba(167,139,250,0.04)" }}>
+                      <span style={{ fontSize:14, flexShrink:0 }}>
+                        {item.type==="image"?"🖼":item.type==="audio"?"🎵":item.type==="link"?"🔗":item.type==="video"?"🎬":"📄"}
+                      </span>
+                      {item.preview && (
+                        <img src={item.preview} alt="" style={{ width:32, height:32, objectFit:"cover", borderRadius:1, flexShrink:0 }}/>
+                      )}
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:9, color:"rgba(167,139,250,0.6)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</div>
+                        {item.type==="text" && <div style={{ fontSize:8, color:"rgba(167,139,250,0.3)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.content?.slice(0,50)}</div>}
+                      </div>
+                      <button onClick={() => canvas.removeItem(item.id)}
+                        style={{ fontSize:10, color:"rgba(251,113,133,0.45)", background:"transparent", border:"none", cursor:"pointer", flexShrink:0, padding:"0 2px" }}>✕</button>
                     </div>
                   ))}
                 </div>
-              </div>
-              <hr style={{ border:"none", borderTop:"0.5px solid rgba(167,139,250,0.07)", margin:"4px 10px 8px" }}/>
-              {/* Submit area */}
-              <div style={{ padding:"0 10px 12px" }}>
-                <div style={{ border:"0.5px dashed rgba(167,139,250,0.2)", borderRadius:2, background:"rgba(167,139,250,0.025)", padding:"8px", marginBottom:6, fontSize:8, letterSpacing:"0.1em", color:"rgba(167,139,250,0.3)", textAlign:"center", display:"flex", alignItems:"center", justifyContent:"center", gap:4, minHeight:34, cursor:"pointer" }}>
-                  ↑ Drop file · paste image
+              )}
+
+              {/* Artifact grid */}
+              {artifacts.length > 0 && (
+                <div style={{ padding:"8px 10px 4px" }}>
+                  <div style={{ fontSize:8, letterSpacing:"0.22em", color:"rgba(167,139,250,0.25)", marginBottom:6 }}>SAVED ARTIFACTS</div>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:4 }}>
+                    {artifacts.slice(0,4).map(a => (
+                      <div key={a.id} style={{ border:"0.5px solid rgba(167,139,250,0.12)", borderRadius:2, background:"rgba(167,139,250,0.03)", padding:"6px 5px", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3 }}
+                        onClick={() => send(`[Artifact: ${a.name}] ${a.content||a.description||''}`)}>
+                        <span style={{ fontSize:15 }}>{a.type==="image"?"🖼":a.type==="audio"?"🎵":a.type==="link"?"🔗":a.type==="video"?"🎬":"📄"}</span>
+                        <span style={{ fontSize:7, color:"rgba(167,139,250,0.35)", textAlign:"center", lineHeight:1.3 }}>{a.name.slice(0,14)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <textarea value={canvasText} onChange={e => setCanvasText(e.target.value)}
-                  placeholder="Paste text, a link, or a note to submit to Tania…"
-                  style={{ width:"100%", background:"rgba(167,139,250,0.04)", border:"0.5px solid rgba(167,139,250,0.14)", borderRadius:2, padding:"7px 8px", fontSize:10, color:"rgba(167,139,250,0.6)", fontFamily:"inherit", resize:"none", minHeight:54, outline:"none", marginBottom:5 }}
+              )}
+
+              <hr style={{ border:"none", borderTop:"0.5px solid rgba(167,139,250,0.07)", margin:"6px 10px" }}/>
+
+              {/* Drop zone + file input */}
+              <div style={{ padding:"0 10px 10px", flex:1, display:"flex", flexDirection:"column", gap:6 }}>
+                <input ref={canvas.fileInputRef} type="file" multiple accept="image/*,audio/*,video/*,.txt,.md,.pdf"
+                  style={{ display:"none" }}
+                  onChange={e => canvas.addFiles(e.target.files)}/>
+
+                {/* Drop target */}
+                <div
+                  onClick={() => canvas.fileInputRef.current?.click()}
+                  onDrop={canvas.handleDrop}
+                  onDragOver={e => { e.preventDefault(); canvas.setDragOver(true); }}
+                  onDragLeave={() => canvas.setDragOver(false)}
+                  style={{
+                    border:`0.5px dashed rgba(167,139,250,${canvas.dragOver?0.6:0.22})`,
+                    borderRadius:2,
+                    background:`rgba(167,139,250,${canvas.dragOver?0.08:0.025})`,
+                    padding:"10px 8px",
+                    fontSize:8, letterSpacing:"0.1em",
+                    color:`rgba(167,139,250,${canvas.dragOver?0.7:0.32})`,
+                    textAlign:"center", cursor:"pointer",
+                    transition:"all 0.15s ease",
+                    minHeight:42,
+                    display:"flex", alignItems:"center", justifyContent:"center", gap:5,
+                  }}>
+                  ↑ {canvas.dragOver ? "DROP IT" : "Drop file or click to browse"}
+                </div>
+
+                {/* Text / link / paste input */}
+                <textarea
+                  value={canvasText}
+                  onChange={e => setCanvasText(e.target.value)}
+                  onPaste={canvas.handlePaste}
+                  placeholder="Paste text, image, or link… Ctrl+V works here"
+                  style={{ width:"100%", background:"rgba(167,139,250,0.04)", border:"0.5px solid rgba(167,139,250,0.14)", borderRadius:2, padding:"7px 8px", fontSize:10, color:"rgba(167,139,250,0.65)", fontFamily:"inherit", resize:"none", minHeight:60, outline:"none" }}
                 />
-                <button onClick={submitCanvas}
-                  style={{ width:"100%", padding:6, fontSize:8, letterSpacing:"0.18em", color:"rgba(167,139,250,0.6)", border:"0.5px solid rgba(167,139,250,0.22)", borderRadius:2, background:"rgba(167,139,250,0.06)", cursor:"pointer" }}>
+
+                {/* Add text to queue */}
+                {canvasText.trim() && (
+                  <button onClick={() => { canvas.addText(canvasText); setCanvasText(""); }}
+                    style={{ width:"100%", padding:5, fontSize:8, letterSpacing:"0.15em", color:"rgba(167,139,250,0.5)", border:"0.5px solid rgba(167,139,250,0.18)", borderRadius:2, background:"transparent", cursor:"pointer" }}>
+                    + ADD TO QUEUE
+                  </button>
+                )}
+
+                {/* Submit to Tania */}
+                <button
+                  onClick={() => { canvas.submit(canvasText); setCanvasText(""); }}
+                  disabled={canvas.items.length === 0 && !canvasText.trim()}
+                  style={{ width:"100%", padding:6, fontSize:8, letterSpacing:"0.18em", color:"rgba(167,139,250,0.7)", border:"0.5px solid rgba(167,139,250,0.28)", borderRadius:2, background:"rgba(167,139,250,0.08)", cursor:"pointer", opacity: canvas.items.length===0 && !canvasText.trim() ? 0.4 : 1 }}>
                   SUBMIT TO TANIA
                 </button>
+
+                <div style={{ fontSize:7, color:"rgba(167,139,250,0.2)", textAlign:"center", letterSpacing:"0.08em" }}>
+                  Files save as artifacts · Text sends directly to dialogue
+                </div>
               </div>
             </div>
           )}
