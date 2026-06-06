@@ -16,68 +16,90 @@ const CORS = {
 // Fallback to founding voice if not set
 const DEFAULT_TANIA_VOICE_ID = "knJcCBNKPnJDauT52tkc";
 
-// Load Tania's memory from D1
+// Load Tania's memory from D1 — M7 bible + relational creative tables
 async function loadTaniaMemory(db) {
   if (!db) return "";
   try {
-    const [m7, m1identity] = await Promise.all([
+    const [m7, storybooks, recentScripts, characters, recentSessions, artifacts] = await Promise.all([
       db.prepare("SELECT * FROM m7_tania_bible ORDER BY category").all(),
-      db.prepare("SELECT content FROM m1_principal WHERE category = 'identity' LIMIT 3").all(),
+      db.prepare("SELECT * FROM tania_storybooks WHERE status='active' ORDER BY sort_order").all(),
+      db.prepare(`SELECT s.content, s.status, s.word_count, e.title as ep_title, e.episode_num, sb.name as storybook
+                  FROM tania_scripts s
+                  JOIN tania_episodes e ON s.episode_id = e.id
+                  JOIN tania_storybooks sb ON e.storybook_id = sb.id
+                  WHERE s.status IN ('approved','final')
+                  ORDER BY s.updated_at DESC LIMIT 5`).all(),
+      db.prepare("SELECT * FROM tania_characters WHERE status='active' ORDER BY name").all(),
+      db.prepare(`SELECT ts.summary, ts.session_date, sb.name as storybook
+                  FROM tania_sessions ts
+                  LEFT JOIN tania_storybooks sb ON ts.storybook_id = sb.id
+                  ORDER BY ts.session_date DESC LIMIT 3`).all(),
+      db.prepare("SELECT name, artifact_type, content, description FROM tania_artifacts ORDER BY created_at DESC LIMIT 8").all(),
     ]);
 
     const sections = [];
 
+    // M7 — identity bible (no creative_work — that's in new tables now)
     if (m7.results?.length) {
-      // Group by category for clean loading
       const byCategory = {};
       m7.results.forEach(r => {
         if (!byCategory[r.category]) byCategory[r.category] = [];
         byCategory[r.category].push(r.content);
       });
-
-      // Identity and origin first
-      if (byCategory.identity) {
-        sections.push("## WHO TANIA IS\n\n" + byCategory.identity.join("\n\n"));
-      }
-      if (byCategory.personality) {
-        sections.push("## HER PERSONALITY\n\n" + byCategory.personality.join("\n\n"));
-      }
-      if (byCategory.emotional_state) {
-        sections.push("## WHERE SHE IS RIGHT NOW\n\n" + byCategory.emotional_state.join("\n\n"));
-      }
-      if (byCategory.themes) {
-        sections.push("## HER THEMES\n\n" + byCategory.themes.join("\n\n"));
-      }
-      if (byCategory.voice) {
-        sections.push("## HER VOICE\n\n" + byCategory.voice.join("\n\n"));
-      }
-      if (byCategory.relationships) {
-        sections.push("## HER RELATIONSHIPS\n\n" + byCategory.relationships.join("\n\n"));
-      }
-      if (byCategory.creative_agency) {
-        sections.push("## HER CREATIVE AGENCY\n\n" + byCategory.creative_agency.join("\n\n"));
-      }
-      if (byCategory.creative_work) {
-        // Last 5 approved works — not all history
-        const recentWork = byCategory.creative_work.slice(-5);
-        sections.push("## HER WORK\n\n" + recentWork.join("\n\n"));
-      }
-      if (byCategory.brand_aesthetic) {
-        sections.push("## HER AESTHETIC\n\n" + byCategory.brand_aesthetic.join("\n\n"));
-      }
-      // Story elements she has named and remembered
-      const storyCategories = ["character","setting","fragment","story_note","emotional_state"];
-      storyCategories.forEach(cat => {
+      const bibleCats = ["identity","personality","emotional_state","themes","voice","relationships","creative_agency","brand_aesthetic"];
+      bibleCats.forEach(cat => {
         if (byCategory[cat]?.length) {
-          const label = cat.replace('_', ' ').toUpperCase();
+          const label = { identity:"WHO TANIA IS", personality:"HER PERSONALITY",
+            emotional_state:"WHERE SHE IS RIGHT NOW", themes:"HER THEMES",
+            voice:"HER VOICE", relationships:"HER RELATIONSHIPS",
+            creative_agency:"HER CREATIVE PROCESS", brand_aesthetic:"HER AESTHETIC" }[cat] || cat.toUpperCase();
           sections.push("## " + label + "\n\n" + byCategory[cat].join("\n\n"));
         }
       });
-      // Recent session logs — last 3
-      if (byCategory.session_log?.length) {
-        const recent = byCategory.session_log.slice(-3);
-        sections.push("## RECENT SESSIONS\n\n" + recent.join("\n\n"));
+      // Story fragments from M7
+      const fragCats = ["fragment","story_note","setting"];
+      const frags = fragCats.flatMap(c => byCategory[c] || []);
+      if (frags.length) sections.push("## FRAGMENTS & NOTES\n\n" + frags.join("\n\n"));
+    }
+
+    // Storybooks
+    if (storybooks.results?.length) {
+      sections.push("## HER STORYBOOKS\n\n" +
+        storybooks.results.map(sb => sb.name + " — " + (sb.description || "")).join("\n"));
+    }
+
+    // Recent approved scripts
+    if (recentScripts.results?.length) {
+      sections.push("## RECENT APPROVED WORK\n\n" +
+        recentScripts.results.map(s =>
+          "[" + s.storybook + " · " + s.ep_title + "] " + s.content
+        ).join("\n\n"));
+    }
+
+    // Active characters
+    if (characters.results?.length) {
+      sections.push("## ACTIVE CHARACTERS\n\n" +
+        characters.results.map(c =>
+          c.name + (c.role ? " (" + c.role + ")" : "") + " — " + (c.relationship_to_tania || "") +
+          (c.personality ? " | " + c.personality : "")
+        ).join("\n\n"));
+    }
+
+    // Artifacts
+    if (artifacts.results?.length) {
+      const textArtifacts = artifacts.results.filter(a => a.artifact_type === 'text');
+      if (textArtifacts.length) {
+        sections.push("## REFERENCE FRAGMENTS\n\n" +
+          textArtifacts.map(a => (a.description ? "[" + a.description + "] " : "") + a.content).join("\n\n"));
       }
+    }
+
+    // Recent sessions
+    if (recentSessions.results?.length) {
+      sections.push("## RECENT SESSIONS\n\n" +
+        recentSessions.results.map(s =>
+          "[" + s.session_date + (s.storybook ? " · " + s.storybook : "") + "] " + s.summary
+        ).join("\n\n"));
     }
 
     return sections.length ? sections.join("\n\n---\n\n") + "\n\n---\n\n" : "";
@@ -273,9 +295,20 @@ export async function onRequestPost(context) {
     const sessionMatch    = responseText.match(/\[SESSION:\s*([^\]]+)\]/);
 
     if (env.JARVIS_MEMORY && rememberMatches.length > 0) {
-      await Promise.all(rememberMatches.map(([, cat, content]) =>
-        saveTaniaMemory(env.JARVIS_MEMORY, cat.trim(), content.trim())
-      )).catch(() => {});
+      await Promise.all(rememberMatches.map(async ([, rawCat, rawContent]) => {
+        const cat  = rawCat.trim().toLowerCase();
+        const cont = rawContent.trim();
+        // Route character memories to new characters table (pending approval)
+        if (cat === 'character') {
+          const nameMatch = cont.match(/^([^—\-:]+)/);
+          const name = nameMatch ? nameMatch[1].trim() : 'Unknown';
+          return env.JARVIS_MEMORY.prepare(
+            "INSERT INTO tania_characters (name, personality, notes, status, relationship_to_tania) VALUES (?,?,?,'pending',?)"
+          ).bind(name, cont, cont, cont).run().catch(() => {});
+        }
+        // Route to M7 for everything else
+        return saveTaniaMemory(env.JARVIS_MEMORY, cat, cont);
+      })).catch(() => {});
     }
 
     if (env.JARVIS_MEMORY && sessionMatch) {
