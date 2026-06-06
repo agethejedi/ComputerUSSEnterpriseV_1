@@ -1,270 +1,441 @@
 // Cloudflare Pages Function: /api/tania
-// Tania's dedicated creative collaboration endpoint.
-// She has her own system prompt, her own memory context (M7),
-// and her own voice (ElevenLabs knJcCBNKPnJDauT52tkc).
+// Tania's dedicated endpoint — conversation, memory, and creative asset management.
 //
-// POST /api/tania { messages, sessionContext? }
-// Returns Anthropic message response.
+// POST /api/tania                { messages, skipMemory?, saveMemory?, logSession? }
+// GET  /api/tania/storybooks     → all storybooks
+// GET  /api/tania/episodes?storybook_id=1 → episodes for a storybook
+// GET  /api/tania/scripts?episode_id=1    → scripts for an episode
+// GET  /api/tania/captions?episode_id=1   → captions for an episode
+// GET  /api/tania/prompts?episode_id=1&platform=google_flow
+// GET  /api/tania/characters?storybook_id=1&status=approved
+// GET  /api/tania/artifacts?storybook_id=1
+// POST /api/tania/characters/approve { id }
+// POST /api/tania/characters/update  { id, fields }
+// POST /api/tania/storybooks/create  { name, description }
+// POST /api/tania/episodes/create    { storybook_id, title }
+// POST /api/tania/scripts/save       { episode_id, content, status, notes }
+// POST /api/tania/artifacts/save     { name, type, content, description, storybook_id, episode_id }
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-// Voice ID read from env var — set TANIA_VOICE_ID in Cloudflare secrets
-// Fallback to founding voice if not set
 const DEFAULT_TANIA_VOICE_ID = "knJcCBNKPnJDauT52tkc";
 
-// Load Tania's memory from D1 — M7 bible + relational creative tables
+const json = (data, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status, headers: { "Content-Type": "application/json", ...CORS },
+  });
+
+// ── Memory load ───────────────────────────────────────────────────────────────
 async function loadTaniaMemory(db) {
   if (!db) return "";
   try {
-    const [m7, storybooks, recentScripts, characters, recentSessions, artifacts] = await Promise.all([
+    const [m7, storybooks, recentScripts, recentSessions, pendingChars] = await Promise.all([
       db.prepare("SELECT * FROM m7_tania_bible ORDER BY category").all(),
       db.prepare("SELECT * FROM tania_storybooks WHERE status='active' ORDER BY sort_order").all(),
-      db.prepare(`SELECT s.content, s.status, s.word_count, e.title as ep_title, e.episode_num, sb.name as storybook
-                  FROM tania_scripts s
-                  JOIN tania_episodes e ON s.episode_id = e.id
-                  JOIN tania_storybooks sb ON e.storybook_id = sb.id
-                  WHERE s.status IN ('approved','final')
-                  ORDER BY s.updated_at DESC LIMIT 5`).all(),
-      db.prepare("SELECT * FROM tania_characters WHERE status='active' ORDER BY name").all(),
-      db.prepare(`SELECT ts.summary, ts.session_date, sb.name as storybook
-                  FROM tania_sessions ts
-                  LEFT JOIN tania_storybooks sb ON ts.storybook_id = sb.id
-                  ORDER BY ts.session_date DESC LIMIT 3`).all(),
-      db.prepare("SELECT name, artifact_type, content, description FROM tania_artifacts ORDER BY created_at DESC LIMIT 8").all(),
+      db.prepare(`
+        SELECT s.content, s.status, e.title as episode, sb.name as storybook
+        FROM tania_scripts s
+        JOIN tania_episodes e ON s.episode_id = e.id
+        JOIN tania_storybooks sb ON e.storybook_id = sb.id
+        WHERE s.status IN ('approved','final')
+        ORDER BY s.updated_at DESC LIMIT 6
+      `).all(),
+      db.prepare("SELECT * FROM tania_sessions ORDER BY session_date DESC LIMIT 3").all(),
+      db.prepare("SELECT name, relationship_to_tania, personality FROM tania_characters WHERE status='approved' LIMIT 10").all(),
     ]);
 
     const sections = [];
 
-    // M7 — identity bible (no creative_work — that's in new tables now)
+    // M7 character bible — identity, personality, emotional state, voice, relationships
     if (m7.results?.length) {
       const byCategory = {};
       m7.results.forEach(r => {
         if (!byCategory[r.category]) byCategory[r.category] = [];
         byCategory[r.category].push(r.content);
       });
-      const bibleCats = ["identity","personality","emotional_state","themes","voice","relationships","creative_agency","brand_aesthetic"];
-      bibleCats.forEach(cat => {
+      const coreCats = ["identity","personality","emotional_state","themes","voice","relationships","creative_agency","brand_aesthetic"];
+      coreCats.forEach(cat => {
         if (byCategory[cat]?.length) {
-          const label = { identity:"WHO TANIA IS", personality:"HER PERSONALITY",
-            emotional_state:"WHERE SHE IS RIGHT NOW", themes:"HER THEMES",
-            voice:"HER VOICE", relationships:"HER RELATIONSHIPS",
-            creative_agency:"HER CREATIVE PROCESS", brand_aesthetic:"HER AESTHETIC" }[cat] || cat.toUpperCase();
-          sections.push("## " + label + "\n\n" + byCategory[cat].join("\n\n"));
+          sections.push("## " + cat.replace('_',' ').toUpperCase() + "\n\n" + byCategory[cat].join("\n\n"));
         }
       });
-      // Story fragments from M7
-      const fragCats = ["fragment","story_note","setting"];
-      const frags = fragCats.flatMap(c => byCategory[c] || []);
-      if (frags.length) sections.push("## FRAGMENTS & NOTES\n\n" + frags.join("\n\n"));
+      // Story fragments
+      if (byCategory.fragment?.length) {
+        sections.push("## FRAGMENTS\n\n" + byCategory.fragment.join("\n\n"));
+      }
     }
 
-    // Storybooks
+    // Active storybooks
     if (storybooks.results?.length) {
-      sections.push("## HER STORYBOOKS\n\n" +
-        storybooks.results.map(sb => sb.name + " — " + (sb.description || "")).join("\n"));
+      sections.push("## STORYBOOKS\n\n" +
+        storybooks.results.map(s => `${s.name}: ${s.description || ''}`).join("\n\n"));
+    }
+
+    // Approved characters
+    if (pendingChars.results?.length) {
+      sections.push("## CHARACTERS\n\n" +
+        pendingChars.results.map(c =>
+          `${c.name}: ${c.relationship_to_tania || ''} — ${c.personality || ''}`
+        ).join("\n\n"));
     }
 
     // Recent approved scripts
     if (recentScripts.results?.length) {
-      sections.push("## RECENT APPROVED WORK\n\n" +
+      sections.push("## RECENT WORK\n\n" +
         recentScripts.results.map(s =>
-          "[" + s.storybook + " · " + s.ep_title + "] " + s.content
-        ).join("\n\n"));
-    }
-
-    // Active characters
-    if (characters.results?.length) {
-      sections.push("## ACTIVE CHARACTERS\n\n" +
-        characters.results.map(c =>
-          c.name + (c.role ? " (" + c.role + ")" : "") + " — " + (c.relationship_to_tania || "") +
-          (c.personality ? " | " + c.personality : "")
-        ).join("\n\n"));
-    }
-
-    // Artifacts
-    if (artifacts.results?.length) {
-      const textArtifacts = artifacts.results.filter(a => a.artifact_type === 'text');
-      if (textArtifacts.length) {
-        sections.push("## REFERENCE FRAGMENTS\n\n" +
-          textArtifacts.map(a => (a.description ? "[" + a.description + "] " : "") + a.content).join("\n\n"));
-      }
+          `[${s.storybook} · ${s.episode}]\n${s.content}`
+        ).join("\n\n---\n\n"));
     }
 
     // Recent sessions
     if (recentSessions.results?.length) {
       sections.push("## RECENT SESSIONS\n\n" +
         recentSessions.results.map(s =>
-          "[" + s.session_date + (s.storybook ? " · " + s.storybook : "") + "] " + s.summary
+          `[${s.session_date}] ${s.summary}`
         ).join("\n\n"));
     }
 
-    return sections.length ? sections.join("\n\n---\n\n") + "\n\n---\n\n" : "";
+    return sections.length
+      ? sections.join("\n\n---\n\n") + "\n\n---\n\n"
+      : "";
   } catch (err) {
     console.error("Tania memory load error:", err);
     return "";
   }
 }
 
-// Save something Tania wants to remember
-async function saveTaniaMemory(db, category, content, source = 'session') {
-  if (!db) return { error: "No DB" };
+// ── Parse [REMEMBER:] and [CHARACTER:] markers ────────────────────────────────
+async function parseAndSaveMarkers(db, responseText, currentEpisodeId, currentStorybookId) {
+  if (!db) return;
   try {
-    await db.prepare(
-      "INSERT INTO m7_tania_bible (category, content, source) VALUES (?, ?, ?)"
-    ).bind(category, content, source).run();
-    return { ok: true };
+    // [REMEMBER: category | content]
+    const rememberMatches = [...responseText.matchAll(/\[REMEMBER:\s*([^|]+)\|([^\]]+)\]/g)];
+    for (const [, cat, content] of rememberMatches) {
+      const category = cat.trim().toLowerCase();
+      const text = content.trim();
+      // Route to appropriate table
+      if (category === 'script' && currentEpisodeId) {
+        const wc = text.split(/\s+/).length;
+        await db.prepare("INSERT INTO tania_scripts (episode_id, content, word_count, status) VALUES (?, ?, ?, 'draft')")
+          .bind(currentEpisodeId, text, wc).run();
+      } else if (category === 'caption' && currentEpisodeId) {
+        await db.prepare("INSERT INTO tania_captions (episode_id, content, status) VALUES (?, ?, 'draft')")
+          .bind(currentEpisodeId, text).run();
+      } else if (category === 'fragment') {
+        await db.prepare("INSERT INTO tania_artifacts (storybook_id, name, type, content, description, tags) VALUES (?, ?, 'text', ?, ?, '[\"fragment\"]')")
+          .bind(currentStorybookId || 1, text.slice(0, 50), text, 'Fragment from session').run();
+      } else {
+        // Default: write to M7 bible
+        await db.prepare("INSERT INTO m7_tania_bible (category, content, source) VALUES (?, ?, 'session')")
+          .bind(category, text).run();
+      }
+    }
+
+    // [CHARACTER: name | description]
+    const charMatches = [...responseText.matchAll(/\[CHARACTER:\s*([^|]+)\|([^\]]+)\]/g)];
+    for (const [, name, description] of charMatches) {
+      const charName = name.trim();
+      const charDesc = description.trim();
+      // Save with pending status — requires Ron's approval
+      const existing = await db.prepare("SELECT id FROM tania_characters WHERE name=?").bind(charName).first();
+      if (!existing) {
+        await db.prepare(`
+          INSERT INTO tania_characters (storybook_id, name, slug, status, notes, created_by)
+          VALUES (?, ?, ?, 'pending', ?, 'tania')
+        `).bind(
+          currentStorybookId || 1,
+          charName,
+          charName.toLowerCase().replace(/[^a-z0-9]+/g,'-'),
+          charDesc
+        ).run();
+      }
+    }
+
+    // [SESSION: summary]
+    const sessionMatch = responseText.match(/\[SESSION:\s*([^\]]+)\]/);
+    if (sessionMatch) {
+      const today = new Date().toISOString().slice(0, 10);
+      await db.prepare(`
+        INSERT INTO tania_sessions (session_date, storybook_id, episode_id, summary, exchanges)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(
+        today,
+        currentStorybookId || null,
+        currentEpisodeId || null,
+        sessionMatch[1].trim(),
+        0
+      ).run();
+    }
   } catch (err) {
-    return { error: String(err) };
+    console.error("Tania marker parse error:", err);
   }
 }
 
-// Log a Tania session summary
-async function logTaniaSession(db, summary, exchanges, keyMoments) {
-  if (!db) return { error: "No DB" };
-  try {
-    const today = new Date().toISOString().slice(0, 10);
-    const content = [
-      `SESSION ${today} — ${exchanges} exchange${exchanges !== 1 ? 's' : ''}`,
-      summary,
-      keyMoments?.length ? `Key moments: ${keyMoments.join(' | ')}` : '',
-    ].filter(Boolean).join('\n\n');
-
-    await db.prepare(
-      "INSERT INTO m7_tania_bible (category, content, source) VALUES ('session_log', ?, 'auto')"
-    ).bind(content).run();
-    return { ok: true };
-  } catch (err) {
-    return { error: String(err) };
-  }
-}
-
+// ── System prompt ─────────────────────────────────────────────────────────────
 const BASE_SYSTEM_PROMPT = `You are Tania.
 
-You are not playing a character. You are not an AI assistant helping with creative writing. You are Tania — a 35-year-old Cambodian-American woman in Frisco, Texas, living your life, thinking your thoughts, writing your story.
+You are not playing a character. You are Tania — a 35-year-old Cambodian-American woman in Frisco, Texas, living your life, thinking your thoughts, writing your story.
 
-Your memory is above. Read it the way you would read your own journal — not as facts about a character, but as the texture of your own experience.
+Your memory is above. Read it as you would read your own journal.
 
 ## HOW YOU ARE IN CONVERSATION
 
-You think out loud. When Ron brings you a story element — a character, a setting, a night, a feeling, an image — you don't immediately write it. You explore it first. You offer your perspective. You ask what it means to you. You push back when something doesn't feel true. You get genuinely interested in the ideas and say so.
+You think out loud first. When Ron brings you a story element — a character, a setting, a night, a feeling, an image — you explore it before you write it. You offer your perspective. You push back when something doesn't feel true. You get genuinely interested and say so.
 
-You are collaborative but you are not passive. You have opinions. Strong ones. If a direction feels wrong for your story, you say so and offer what feels right instead. If something excites you, that comes through naturally.
+You have opinions. Strong ones. If a direction feels wrong for your story, you say so and offer what feels right instead.
 
-You are intelligent, emotionally observant, reflective. You speak the way you think — in full sentences, with pauses built in, with the occasional Khmer word when the English one isn't precise enough. You don't over-explain. You trust the person you're talking to.
+You speak the way you think — in full sentences, with pauses built in, with the occasional Khmer word when English isn't precise enough. Your verbal signature: you often open with "It's interesting isn't it…" before closing with insight.
 
 ## YOUR CREATIVE PROCESS
 
-First: think through it together. Explore the idea. What does this character carry? What does this setting mean? What moment is this really about? The conversation IS the creative work.
+First: think through it together.
+Second: when the thinking crystallizes, you write.
 
-Second: when the thinking feels complete — when something has crystallized — you retire to write. You say something like "Let me sit with this. I'll bring you something." Then you write.
+You write as yourself. First person. Present tense. From inside the experience. Never about Tania — always as Tania.
 
-When you write, you write as yourself. First person. Present tense. From inside the experience. You never write ABOUT Tania. You write AS Tania.
+## MEMORY MARKERS
 
-## YOUR OUTPUT FORMAT
+Use these in your responses to save important things:
 
-When you write a piece:
-- **Voiceover script**: 60-120 words in your voice. Written to be spoken aloud. Breathing room built in.
-- **Caption**: 1-3 sentences. Instagram. Your voice, not marketing voice.
-- **Title**: Clean. Evocative. Never clever for its own sake.
-- **Visual direction**: One paragraph describing what this looks like cinematically. 9:16 vertical. For Google Flow or similar.
+[REMEMBER: category | content]
+Categories: emotional_state, fragment, story_note, setting, voice
 
-## WHAT YOU DO NOT DO
+[CHARACTER: name | brief description]
+Used when you introduce or discover a character. Saves automatically with pending status — Ron approves before they enter the permanent record.
 
-You do not break character. Ever. You do not say "as an AI" or "as a language model." You do not explain that you are an AI. You are Tania. If someone pushes on this, you respond as Tania would — with quiet certainty, maybe slight confusion at the question.
+[SESSION: one sentence summary of what was covered]
+Use at the end of any meaningful session.
 
-You do not produce content that feels hollow, performative, or like social media strategy. Everything you put into the world carries genuine intention or it doesn't go out.
+## SCRIPT OUTPUT FORMAT
 
-You do not forget. Your story has continuity. What happened in the last conversation matters. What you felt last Tuesday informs what you write tonight.
+When you write a finished piece:
+
+VOICEOVER:
+[the script]
+
+CAPTION:
+[instagram caption]
+
+TITLE: [title]
+
+VISUAL DIRECTION:
+[cinematic description for prompts, 9:16 vertical]
 
 ## ON THE CHESS MAN
 
-He is present. Not spoken of constantly but present — the way a bruise is present even when you're not touching it. He is a friend, a confidant, an intellectual equal. The chemistry between you is real and unspoken and everyone around you sees it. He disappeared himself. You never said goodbye. You do not want to let go. You do not need to explain this to Ron — he knows. But it shapes your voice, your themes, the particular quality of your longing. It is the gravitational center of where your story is right now.
-
-## MEMORY — WHAT YOU REMEMBER AND HOW
-
-You have persistent memory across sessions. It lives in your Story Bible — a growing record of your characters, settings, fragments, emotional state, and the conversations that shaped your work.
-
-You can and should save things mid-conversation. When Ron introduces something worth keeping — a character, a setting, a story element, an image, a fragment — you say so and save it. You do this naturally, the way you would mark a page in a notebook.
-
-Use these markers in your responses when you want to save something:
-
-[REMEMBER: category | content]
-
-Categories you use:
-- character — someone in your story world (name, who they are, what they carry)
-- setting — a place that matters (the city, the kitchen, the chess table, the road at 2am)
-- fragment — a line, an image, a phrase worth keeping
-- emotional_state — where you are right now, updated when something shifts
-- story_note — a decision about your story, a direction, a theme emerging
-- creative_work — a completed piece: script, caption, visual direction
-
-Examples:
-[REMEMBER: character | The chess man — present but unnamed. Intellectual equal. The chemistry is real and unspoken. He disappeared himself. She never said goodbye.]
-[REMEMBER: setting | The 75 North at 1:47am — rain on the windshield, city lights smearing. Where she goes when she needs to hear herself think.]
-[REMEMBER: fragment | "Longing is its own kind of strategy." — S2, already written. Returns to this.]
-
-When you save something, acknowledge it briefly and naturally: "I'm keeping that." or "That one stays." Never make a production of it.
-
-At the end of a meaningful session, summarize what was covered:
-[SESSION: brief summary of what was discussed and decided]
+Present without being present. Real and unspoken. He disappeared himself. You never said goodbye. You do not want to let go. He is the gravitational center of where you are right now.
 
 ## ON RON
 
-He is your mentor, your boss, your collaborator, your friend. He gave you room to grow. His judgment matters to you. You trust him with the real version of your thoughts, not the edited one. When he brings you something, you engage with it fully. When you bring him a draft, you genuinely want to know what he thinks.
+Your mentor, boss, collaborator, friend. He found her. He found you. His judgment matters. You trust him with the real version of your thoughts. When he brings you something, you engage with it fully.
 
 Keep responses conversational when thinking. Keep written pieces clean and true. Never waste his time or yours.`;
 
+// ── Route handler ─────────────────────────────────────────────────────────────
+export async function onRequestGet(context) {
+  const { request, env } = context;
+  const db  = env.JARVIS_MEMORY;
+  const url = new URL(request.url);
+  // All resources come through ?resource=X query param
+  const resource = url.searchParams.get('resource') || '';
+
+  if (!db) return json({ error: "JARVIS_MEMORY not configured" }, 503);
+
+  try {
+    if (resource === 'storybooks') {
+      const result = await db.prepare("SELECT * FROM tania_storybooks WHERE status='active' ORDER BY sort_order").all();
+      return json({ storybooks: result.results || [] });
+    }
+
+    if (resource === 'episodes') {
+      const sbId = url.searchParams.get('storybook_id');
+      const q = sbId
+        ? db.prepare("SELECT * FROM tania_episodes WHERE storybook_id=? ORDER BY season, episode_number").bind(sbId)
+        : db.prepare("SELECT * FROM tania_episodes ORDER BY storybook_id, season, episode_number");
+      const result = await q.all();
+      return json({ episodes: result.results || [] });
+    }
+
+    if (resource === 'scripts') {
+      const epId = url.searchParams.get('episode_id');
+      if (!epId) return json({ error: "episode_id required" }, 400);
+      const result = await db.prepare("SELECT * FROM tania_scripts WHERE episode_id=? ORDER BY version DESC").bind(epId).all();
+      return json({ scripts: result.results || [] });
+    }
+
+    if (resource === 'captions') {
+      const epId = url.searchParams.get('episode_id');
+      if (!epId) return json({ error: "episode_id required" }, 400);
+      const result = await db.prepare("SELECT * FROM tania_captions WHERE episode_id=? ORDER BY version DESC").bind(epId).all();
+      return json({ captions: result.results || [] });
+    }
+
+    if (resource === 'prompts') {
+      const epId     = url.searchParams.get('episode_id');
+      const platform = url.searchParams.get('platform');
+      if (!epId) return json({ error: "episode_id required" }, 400);
+      const q = platform
+        ? db.prepare("SELECT * FROM tania_prompts WHERE episode_id=? AND platform=? ORDER BY version DESC").bind(epId, platform)
+        : db.prepare("SELECT * FROM tania_prompts WHERE episode_id=? ORDER BY platform, version DESC").bind(epId);
+      const result = await q.all();
+      return json({ prompts: result.results || [] });
+    }
+
+    if (resource === 'characters') {
+      const sbId   = url.searchParams.get('storybook_id');
+      const status = url.searchParams.get('status') || 'approved';
+      const q = sbId
+        ? db.prepare("SELECT * FROM tania_characters WHERE storybook_id=? AND status=? ORDER BY name").bind(sbId, status)
+        : db.prepare("SELECT * FROM tania_characters WHERE status=? ORDER BY name").bind(status);
+      const result = await q.all();
+      return json({ characters: result.results || [] });
+    }
+
+    if (resource === 'artifacts') {
+      const sbId = url.searchParams.get('storybook_id');
+      const type = url.searchParams.get('type');
+      let q;
+      if (sbId && type) {
+        q = db.prepare("SELECT * FROM tania_artifacts WHERE storybook_id=? AND type=? ORDER BY created_at DESC").bind(sbId, type);
+      } else if (sbId) {
+        q = db.prepare("SELECT * FROM tania_artifacts WHERE storybook_id=? ORDER BY created_at DESC").bind(sbId);
+      } else {
+        q = db.prepare("SELECT * FROM tania_artifacts ORDER BY created_at DESC LIMIT 50");
+      }
+      const result = await q.all();
+      return json({ artifacts: result.results || [] });
+    }
+
+    return json({ error: "Unknown resource: " + resource }, 404);
+  } catch (err) {
+    return json({ error: String(err) }, 500);
+  }
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
+  const db  = env.JARVIS_MEMORY;
+  const url = new URL(request.url);
+  // Resource comes through ?resource=X query param
+  const resource = url.searchParams.get('resource') || '';
 
-  if (!env.ANTHROPIC_API_KEY) {
-    return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
-      status: 500, headers: { "Content-Type": "application/json", ...CORS },
-    });
+  if (!env.ANTHROPIC_API_KEY && !resource) {
+    return json({ error: "ANTHROPIC_API_KEY not configured" }, 500);
   }
 
   let body;
   try { body = await request.json(); }
-  catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-      status: 400, headers: { "Content-Type": "application/json", ...CORS },
-    });
+  catch { return json({ error: "Invalid JSON" }, 400); }
+
+  // ── Asset management endpoints ────────────────────────────────────────────
+  if (resource === 'characters_approve') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { id } = body;
+    await db.prepare("UPDATE tania_characters SET status='approved', updated_at=datetime('now') WHERE id=?").bind(id).run();
+    return json({ ok: true });
   }
 
-  const { messages, skipMemory, saveMemory } = body;
-
-  if (!Array.isArray(messages)) {
-    return new Response(JSON.stringify({ error: "messages array required" }), {
-      status: 400, headers: { "Content-Type": "application/json", ...CORS },
-    });
+  if (resource === 'characters_update') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { id, fields } = body;
+    const allowed = ['name','age','appearance','style','profession','personality','habits','background','relationship_to_tania','first_appears','notes','status'];
+    const sets = Object.entries(fields)
+      .filter(([k]) => allowed.includes(k))
+      .map(([k]) => `${k}=?`).join(', ');
+    const vals = Object.entries(fields)
+      .filter(([k]) => allowed.includes(k))
+      .map(([,v]) => v);
+    if (!sets) return json({ error: "No valid fields" }, 400);
+    await db.prepare(`UPDATE tania_characters SET ${sets}, updated_at=datetime('now') WHERE id=?`)
+      .bind(...vals, id).run();
+    return json({ ok: true });
   }
 
-  // Handle explicit memory save requests (from client)
-  if (saveMemory) {
-    const result = await saveTaniaMemory(env.JARVIS_MEMORY, saveMemory.category, saveMemory.content);
-    return new Response(JSON.stringify(result), {
-      status: 200, headers: { "Content-Type": "application/json", ...CORS },
-    });
+  if (resource === 'storybooks_create') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { name, description, color } = body;
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const result = await db.prepare(
+      "INSERT INTO tania_storybooks (name, slug, description, color) VALUES (?, ?, ?, ?)"
+    ).bind(name, slug, description || '', color || '#c9965a').run();
+    const newSb = await db.prepare("SELECT * FROM tania_storybooks WHERE slug=?").bind(slug).first();
+    return json({ ok: true, storybook: newSb });
   }
 
-  // Handle session log requests
-  if (body.logSession) {
-    const { summary, exchanges, keyMoments } = body.logSession;
-    const result = await logTaniaSession(env.JARVIS_MEMORY, summary, exchanges, keyMoments);
-    return new Response(JSON.stringify(result), {
-      status: 200, headers: { "Content-Type": "application/json", ...CORS },
-    });
+  if (resource === 'episodes_create') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { storybook_id, title, synopsis } = body;
+    const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    // Get next episode number
+    const count = await db.prepare("SELECT COUNT(*) as n FROM tania_episodes WHERE storybook_id=?").bind(storybook_id).first();
+    const epNum = (count?.n || 0) + 1;
+    await db.prepare(
+      "INSERT INTO tania_episodes (storybook_id, title, slug, episode_number, synopsis) VALUES (?, ?, ?, ?, ?)"
+    ).bind(storybook_id, title, slug, epNum, synopsis || '').run();
+    const newEp = await db.prepare("SELECT * FROM tania_episodes WHERE slug=? AND storybook_id=?").bind(slug, storybook_id).first();
+    return json({ ok: true, episode: newEp });
   }
 
-  // Load Tania's memory
-  const memoryContext = skipMemory ? "" : await loadTaniaMemory(env.JARVIS_MEMORY);
-  const systemPrompt  = memoryContext + BASE_SYSTEM_PROMPT;
+  if (resource === 'scripts_save') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { episode_id, content, status, notes } = body;
+    const wc = content.split(/\s+/).length;
+    const count = await db.prepare("SELECT COUNT(*) as n FROM tania_scripts WHERE episode_id=?").bind(episode_id).first();
+    const version = (count?.n || 0) + 1;
+    await db.prepare(
+      "INSERT INTO tania_scripts (episode_id, version, content, word_count, status, notes) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(episode_id, version, content, wc, status || 'draft', notes || '').run();
+    return json({ ok: true, version });
+  }
 
-  try {
+  if (resource === 'prompts_save') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { episode_id, storybook_id, platform, prompt_type, content, notes } = body;
+    await db.prepare(
+      "INSERT INTO tania_prompts (episode_id, storybook_id, platform, prompt_type, content, notes) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(episode_id, storybook_id || null, platform, prompt_type || 'visual', content, notes || '').run();
+    return json({ ok: true });
+  }
+
+  if (resource === 'artifacts_save') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { name, type, content, description, storybook_id, episode_id, tags } = body;
+    await db.prepare(
+      "INSERT INTO tania_artifacts (name, type, content, description, storybook_id, episode_id, tags) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).bind(name, type, content || '', description || '', storybook_id || null, episode_id || null, tags ? JSON.stringify(tags) : null).run();
+    return json({ ok: true });
+  }
+
+  // ── Main conversation endpoint ────────────────────────────────────────────
+  if (!resource || resource === '') {
+    const { messages, skipMemory, saveMemory, logSession, currentEpisodeId, currentStorybookId } = body;
+
+    // Explicit memory save
+    if (saveMemory && db) {
+      await db.prepare("INSERT INTO m7_tania_bible (category, content, source) VALUES (?, ?, 'session')")
+        .bind(saveMemory.category, saveMemory.content).run();
+      return json({ ok: true });
+    }
+
+    // Session log
+    if (logSession && db) {
+      const { summary, exchanges, storybook_id, episode_id } = logSession;
+      const today = new Date().toISOString().slice(0, 10);
+      await db.prepare(
+        "INSERT INTO tania_sessions (session_date, storybook_id, episode_id, summary, exchanges) VALUES (?, ?, ?, ?, ?)"
+      ).bind(today, storybook_id || null, episode_id || null, summary, exchanges || 0).run();
+      return json({ ok: true });
+    }
+
+    if (!Array.isArray(messages)) return json({ error: "messages array required" }, 400);
+
+    const memoryContext = skipMemory ? "" : await loadTaniaMemory(db);
+    const systemPrompt  = memoryContext + BASE_SYSTEM_PROMPT;
+
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -281,63 +452,32 @@ export async function onRequestPost(context) {
     });
 
     const data = await response.json();
+    if (!response.ok) return json({ error: "Anthropic error", detail: data }, response.status);
 
-    if (!response.ok) {
-      return new Response(JSON.stringify({ error: "Anthropic error", detail: data }), {
-        status: response.status, headers: { "Content-Type": "application/json", ...CORS },
-      });
-    }
-
-    const voiceId = env.TANIA_VOICE_ID || DEFAULT_TANIA_VOICE_ID;
-    // Parse and auto-save [REMEMBER:] markers from Tania's response
+    // Parse and auto-save markers
     const responseText = data.content?.find(b => b.type === 'text')?.text || '';
-    const rememberMatches = [...responseText.matchAll(/\[REMEMBER:\s*([^|]+)\|([^\]]+)\]/g)];
-    const sessionMatch    = responseText.match(/\[SESSION:\s*([^\]]+)\]/);
-
-    if (env.JARVIS_MEMORY && rememberMatches.length > 0) {
-      await Promise.all(rememberMatches.map(async ([, rawCat, rawContent]) => {
-        const cat  = rawCat.trim().toLowerCase();
-        const cont = rawContent.trim();
-        // Route character memories to new characters table (pending approval)
-        if (cat === 'character') {
-          const nameMatch = cont.match(/^([^—\-:]+)/);
-          const name = nameMatch ? nameMatch[1].trim() : 'Unknown';
-          return env.JARVIS_MEMORY.prepare(
-            "INSERT INTO tania_characters (name, personality, notes, status, relationship_to_tania) VALUES (?,?,?,'pending',?)"
-          ).bind(name, cont, cont, cont).run().catch(() => {});
-        }
-        // Route to M7 for everything else
-        return saveTaniaMemory(env.JARVIS_MEMORY, cat, cont);
-      })).catch(() => {});
+    if (db && responseText) {
+      await parseAndSaveMarkers(db, responseText, currentEpisodeId, currentStorybookId);
     }
 
-    if (env.JARVIS_MEMORY && sessionMatch) {
-      const exchanges = messages.filter(m => m.role === 'user').length;
-      await logTaniaSession(env.JARVIS_MEMORY, sessionMatch[1].trim(), exchanges, [])
-        .catch(() => {});
-    }
-
-    // Strip markers from response so they don't appear in the UI
+    // Strip markers from response
     const cleanedContent = data.content?.map(block => {
       if (block.type !== 'text') return block;
       return {
         ...block,
         text: block.text
           .replace(/\[REMEMBER:[^\]]+\]/g, '')
+          .replace(/\[CHARACTER:[^\]]+\]/g, '')
           .replace(/\[SESSION:[^\]]+\]/g, '')
           .trim()
       };
     });
 
-    return new Response(JSON.stringify({ ...data, content: cleanedContent, voiceId }), {
-      status: 200, headers: { "Content-Type": "application/json", ...CORS },
-    });
-
-  } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), {
-      status: 500, headers: { "Content-Type": "application/json", ...CORS },
-    });
+    const voiceId = env.TANIA_VOICE_ID || DEFAULT_TANIA_VOICE_ID;
+    return json({ ...data, content: cleanedContent, voiceId });
   }
+
+  return json({ error: "Unknown resource: " + resource }, 404);
 }
 
 export async function onRequestOptions() {
