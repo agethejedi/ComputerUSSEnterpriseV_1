@@ -127,6 +127,15 @@ export async function onRequestPost(context) {
   catch { return json({ error: "Invalid JSON" }, 400); }
 
   try {
+    // ── Update image URL ──────────────────────────────────────────────────────
+    if (resource === "update_image") {
+      const { id, image_url } = body;
+      await db.prepare(
+        "UPDATE tania_posts SET image_url = ?, updated_at = datetime('now') WHERE id = ?"
+      ).bind(image_url, id).run();
+      return json({ ok: true });
+    }
+
     // ── Create post (from Tania or Ron) ──────────────────────────────────────
     if (resource === "create_post") {
       const {
@@ -160,6 +169,13 @@ export async function onRequestPost(context) {
       ).first();
 
       return json({ ok: true, post });
+    }
+
+    if (resource === "update_image") {
+      const { id, image_url } = body;
+      await db.prepare("UPDATE tania_posts SET image_url=?, updated_at=datetime('now') WHERE id=?")
+        .bind(image_url, id).run();
+      return json({ ok: true });
     }
 
     // ── Approve post ──────────────────────────────────────────────────────────
