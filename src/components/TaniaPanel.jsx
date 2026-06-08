@@ -445,36 +445,14 @@ function useCanvasInput({ onSubmit, storybookId, episodeId, isActive }) {
 }
 
 // ── Session auto-log ──────────────────────────────────────────────────────────
-async function autoLogSession(messages, apiMessages, storybookId, episodeId) {
+async function autoLogSession(messages, storybookId, episodeId) {
   const userMsgs = messages.filter(m => m.role === "ron");
   if (userMsgs.length < 2) return;
-  const topics = userMsgs.slice(-4).map(m => m.content?.slice(0, 60)).filter(Boolean).join(" | ");
-  // Pass full API message history for memory extraction
-  // Filter out image content blocks — keep only text for storage
-  const cleanTranscript = (apiMessages || [])
-    .filter(m => m.role === "user" || m.role === "assistant")
-    .map(m => ({
-      role: m.role,
-      content: typeof m.content === "string"
-        ? m.content
-        : Array.isArray(m.content)
-          ? m.content.filter(b => b.type === "text").map(b => b.text).join(" ")
-          : String(m.content),
-    }))
-    .filter(m => m.content && m.content.trim() && !m.content.startsWith("[Session opening]"));
+  const topics = userMsgs.slice(-4).map(m => m.content?.slice(0,60)).filter(Boolean).join(" | ");
   try {
     await fetch("/api/tania", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        logSession: {
-          summary: `Session: ${topics}`,
-          exchanges: userMsgs.length,
-          storybook_id: storybookId,
-          episode_id: episodeId,
-          transcript: cleanTranscript,
-        }
-      }),
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ logSession:{ summary:`Session: ${topics}`, exchanges:userMsgs.length, storybook_id:storybookId, episode_id:episodeId } }),
     });
   } catch {}
 }
@@ -812,7 +790,7 @@ export default function TaniaPanel({ isOpen, onClose }) {
             {stateLabel}
           </span>
         </div>
-        <button onClick={() => { autoLogSession(messages, apiMessagesRef.current, activeStorybook?.id, activeEpisode?.id); onClose(); }}
+        <button onClick={() => { autoLogSession(messages, activeStorybook?.id, activeEpisode?.id); onClose(); }}
           style={{ fontSize:9, letterSpacing:"0.18em", color:"rgba(251,113,133,0.55)", border:"0.5px solid rgba(251,113,133,0.25)", padding:"2px 10px", borderRadius:2, background:"transparent", cursor:"pointer" }}>
           ✕ CLOSE
         </button>
