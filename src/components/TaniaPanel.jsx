@@ -233,6 +233,7 @@ function CharacterCard({ char, onApprove, onEdit }) {
 function PostCard({ post, onApprove, onSchedule, onReject }) {
   const [scheduleTime, setScheduleTime] = useState("");
   const [showSchedule, setShowSchedule] = useState(false);
+  const [imageUrl, setImageUrl] = useState(post.image_url || "");
   const statusColor = {
     pending_approval: "rgba(251,191,36,0.6)",
     approved:         "rgba(34,197,94,0.6)",
@@ -270,6 +271,16 @@ function PostCard({ post, onApprove, onSchedule, onReject }) {
 
         {post.status === "pending_approval" && (
           <>
+            {/* Image URL input — required before publishing */}
+            <div style={{ marginBottom:8 }}>
+              <div style={{ fontSize:7, letterSpacing:"0.15em", color:"rgba(201,150,90,0.35)", marginBottom:4 }}>IMAGE URL (required to publish)</div>
+              <input
+                value={imageUrl}
+                onChange={e => setImageUrl(e.target.value)}
+                placeholder="Paste imgbb or CDN URL here…"
+                style={{ width:"100%", background:"rgba(201,150,90,0.04)", border:`0.5px solid ${imageUrl ? "rgba(34,197,94,0.35)" : "rgba(201,150,90,0.18)"}`, borderRadius:2, padding:"5px 8px", fontSize:9, color:"rgba(240,200,122,0.7)", outline:"none", fontFamily:"inherit" }}
+              />
+            </div>
             {showSchedule ? (
               <div style={{ display:"flex", gap:5, alignItems:"center", marginTop:6 }}>
                 <input type="datetime-local" value={scheduleTime}
@@ -284,7 +295,7 @@ function PostCard({ post, onApprove, onSchedule, onReject }) {
               </div>
             ) : (
               <div style={{ display:"flex", gap:5, marginTop:6 }}>
-                <button onClick={() => onApprove(post.id)}
+                <button onClick={() => onApprove(post.id, imageUrl)}
                   style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 10px", borderRadius:2, color:"rgba(34,197,94,0.7)", border:"0.5px solid rgba(34,197,94,0.28)", background:"rgba(34,197,94,0.06)", cursor:"pointer" }}>
                   APPROVE NOW
                 </button>
@@ -445,14 +456,36 @@ function useCanvasInput({ onSubmit, storybookId, episodeId, isActive }) {
 }
 
 // ── Session auto-log ──────────────────────────────────────────────────────────
-async function autoLogSession(messages, storybookId, episodeId) {
+async function autoLogSession(messages, apiMessages, storybookId, episodeId) {
   const userMsgs = messages.filter(m => m.role === "ron");
   if (userMsgs.length < 2) return;
-  const topics = userMsgs.slice(-4).map(m => m.content?.slice(0,60)).filter(Boolean).join(" | ");
+  const topics = userMsgs.slice(-4).map(m => m.content?.slice(0, 60)).filter(Boolean).join(" | ");
+  // Pass full API message history for memory extraction
+  // Filter out image content blocks — keep only text for storage
+  const cleanTranscript = (apiMessages || [])
+    .filter(m => m.role === "user" || m.role === "assistant")
+    .map(m => ({
+      role: m.role,
+      content: typeof m.content === "string"
+        ? m.content
+        : Array.isArray(m.content)
+          ? m.content.filter(b => b.type === "text").map(b => b.text).join(" ")
+          : String(m.content),
+    }))
+    .filter(m => m.content && m.content.trim() && !m.content.startsWith("[Session opening]"));
   try {
     await fetch("/api/tania", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ logSession:{ summary:`Session: ${topics}`, exchanges:userMsgs.length, storybook_id:storybookId, episode_id:episodeId } }),
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        logSession: {
+          summary: `Session: ${topics}`,
+          exchanges: userMsgs.length,
+          storybook_id: storybookId,
+          episode_id: episodeId,
+          transcript: cleanTranscript,
+        }
+      }),
     });
   } catch {}
 }
@@ -520,20 +553,36 @@ export default function TaniaPanel({ isOpen, onClose }) {
         });
       }
     }).catch(() => {});
-    // Load pending post count for badge
-    fetch("/api/instagram?resource=pending_count")
-      .then(r => r.json()).then(d => setPendingCount(d.count || 0)).catch(() => {});
+    // Load pending post count for badge and pre-load posts
+    fetch("/api/instagram?resource=posts")
+      .then(r => r.json())
+      .then(d => {
+        const allPosts = d.posts || [];
+        setPosts(allPosts);
+        setPendingCount(allPosts.filter(p => p.status === "pending_approval").length);
+      }).catch(() => {});
     setTimeout(() => inputRef.current?.focus(), 300);
   }, [isOpen]);
 
-  const approvePost = async (id) => {
-    await fetch("/api/instagram?resource=approve_post", {
+  const approvePost = async (id, imageUrl) => {
+    // Save image URL first if provided
+    if (imageUrl) {
+      await fetch("/api/instagram?resource=update_image", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ id, image_url: imageUrl }),
+      }).catch(() => {});
+    }
+    const res = await fetch("/api/instagram?resource=approve_post", {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({ id }),
-    }).then(r => r.json()).catch(() => {});
-    setPosts(prev => prev.map(p => p.id===id ? {...p, status:"approved"} : p));
+    }).then(r => r.json()).catch(() => ({}));
+    setPosts(prev => prev.map(p => p.id===id ? {...p, status: res.status || "approved", image_url: imageUrl} : p));
     setPendingCount(n => Math.max(0, n - 1));
-    setMessages(prev => [...prev, { role:"tania", content:"Post approved. It will publish when an image is attached.", id:Date.now() }]);
+    if (res.url) {
+      setMessages(prev => [...prev, { role:"tania", content:`Published. ${res.url}`, id:Date.now() }]);
+    } else {
+      setMessages(prev => [...prev, { role:"tania", content: res.note || "Post approved.", id:Date.now() }]);
+    }
   };
 
   const schedulePost = async (id, scheduledAt) => {
@@ -790,7 +839,7 @@ export default function TaniaPanel({ isOpen, onClose }) {
             {stateLabel}
           </span>
         </div>
-        <button onClick={() => { autoLogSession(messages, activeStorybook?.id, activeEpisode?.id); onClose(); }}
+        <button onClick={() => { autoLogSession(messages, apiMessagesRef.current, activeStorybook?.id, activeEpisode?.id); onClose(); }}
           style={{ fontSize:9, letterSpacing:"0.18em", color:"rgba(251,113,133,0.55)", border:"0.5px solid rgba(251,113,133,0.25)", padding:"2px 10px", borderRadius:2, background:"transparent", cursor:"pointer" }}>
           ✕ CLOSE
         </button>
@@ -798,10 +847,21 @@ export default function TaniaPanel({ isOpen, onClose }) {
 
       {/* ── Section nav ── */}
       <div style={{ display:"flex", borderBottom:`0.5px solid ${GX}`, background:INK, flexShrink:0, position:"relative", zIndex:2 }}>
-        {[["storybooks","📖 STORYBOOKS"],["characters","👤 CHARACTERS"],["artifacts","🖼 ARTIFACTS"]].map(([s,l]) => (
-          <button key={s} onClick={() => setSection(s)}
-            style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 16px", fontSize:9, letterSpacing:"0.22em", background:"transparent", border:"none", borderBottom:`1.5px solid ${section===s?G:"transparent"}`, color:section===s?G:"rgba(201,150,90,0.32)", cursor:"pointer" }}>
+        {[["storybooks","📖 STORYBOOKS"],["characters","👤 CHARACTERS"],["artifacts","🖼 ARTIFACTS"],["posts","📱 POSTS"]].map(([s,l]) => (
+          <button key={s} onClick={() => {
+            setSection(s);
+            if (s === "posts") {
+              fetch("/api/instagram?resource=posts")
+                .then(r=>r.json()).then(d=>setPosts(d.posts||[])).catch(()=>{});
+            }
+          }}
+            style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 16px", fontSize:9, letterSpacing:"0.22em", background:"transparent", border:"none", borderBottom:`1.5px solid ${section===s?G:"transparent"}`, color:section===s?G:"rgba(201,150,90,0.32)", cursor:"pointer", position:"relative" }}>
             {l}
+            {s === "posts" && pendingCount > 0 && (
+              <span style={{ fontSize:7, background:"rgba(251,191,36,0.9)", color:"#000", borderRadius:"50%", width:14, height:14, display:"flex", alignItems:"center", justifyContent:"center", fontWeight:"bold", marginLeft:2 }}>
+                {pendingCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -849,7 +909,9 @@ export default function TaniaPanel({ isOpen, onClose }) {
                         <div key={sub} onClick={() => {
                           setActiveSub(sub);
                           if (sub === "posts") {
-                            fetch(`/api/instagram?resource=posts&storybook_id=${activeStorybook?.id||""}`)
+                            // Load ALL posts — not filtered by storybook/episode
+                            // Posts may not have episode_id if created via conversation
+                            fetch(`/api/instagram?resource=posts`)
                               .then(r=>r.json()).then(d=>setPosts(d.posts||[])).catch(()=>{});
                           } else {
                             surfaceContent(sub==="script"?scripts:sub==="caption"?captions:prompts, sub);
@@ -906,6 +968,34 @@ export default function TaniaPanel({ isOpen, onClose }) {
               </div>
             </>
           )}
+
+          {section === "posts" && (
+            <>
+              <div style={{ fontSize:8, letterSpacing:"0.28em", color:"rgba(201,150,90,0.28)", padding:"4px 12px 8px" }}>Post Queue</div>
+              <div style={{ padding:"0 8px" }}>
+                {posts.length === 0 && <div style={{ fontSize:9, color:"rgba(201,150,90,0.25)", padding:"8px 4px", fontStyle:"italic" }}>No posts yet</div>}
+                {posts.map(p => (
+                  <div key={p.id}
+                    onClick={() => setActiveSub("posts")}
+                    style={{ padding:"7px 6px", borderBottom:`0.5px solid ${GX}`, cursor:"pointer" }}>
+                    <div style={{ fontSize:9, color:"rgba(240,200,122,0.65)", marginBottom:2 }}>
+                      {p.caption?.slice(0,40)}{p.caption?.length>40?"…":""}
+                    </div>
+                    <div style={{ display:"flex", gap:4, alignItems:"center", marginTop:3 }}>
+                      <span style={{ fontSize:7, padding:"1px 5px", borderRadius:2,
+                        color: p.status==="pending_approval"?"rgba(251,191,36,0.7)":p.status==="published"?"rgba(34,197,94,0.6)":"rgba(201,150,90,0.45)",
+                        border:`0.5px solid ${p.status==="pending_approval"?"rgba(251,191,36,0.25)":p.status==="published"?"rgba(34,197,94,0.2)":"rgba(201,150,90,0.2)"}`,
+                        background: p.status==="pending_approval"?"rgba(251,191,36,0.07)":"transparent"
+                      }}>
+                        {p.status?.replace(/_/g," ").toUpperCase()}
+                      </span>
+                      <span style={{ fontSize:7, color:"rgba(201,150,90,0.25)" }}>{p.platform?.toUpperCase()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         {/* ── CENTER: work area ── */}
@@ -932,8 +1022,8 @@ export default function TaniaPanel({ isOpen, onClose }) {
           {/* Dialogue */}
           <div ref={scrollRef} style={{ flex:1, overflowY:"auto", padding:"16px 18px", display:"flex", flexDirection:"column", gap:14 }}>
 
-            {/* Posts approval queue — surfaces when Posts sub is active */}
-            {activeSub === "posts" && posts.length > 0 && (
+            {/* Posts approval queue — surfaces when Posts section or sub is active */}
+            {(section === "posts" || activeSub === "posts") && posts.length > 0 && (
               <div>
                 <div style={{ fontSize:8, letterSpacing:"0.25em", color:"rgba(201,150,90,0.35)", marginBottom:10 }}>
                   POST QUEUE · {posts.filter(p=>p.status==="pending_approval").length} PENDING APPROVAL
@@ -948,7 +1038,7 @@ export default function TaniaPanel({ isOpen, onClose }) {
               </div>
             )}
 
-            {activeSub === "posts" && posts.length === 0 && (
+            {(section === "posts" || activeSub === "posts") && posts.length === 0 && (
               <div style={{ fontSize:11, color:"rgba(201,150,90,0.25)", fontFamily:"Georgia,serif", fontStyle:"italic", paddingTop:8 }}>
                 No posts yet. Ask Tania to package an episode for Instagram.
               </div>
