@@ -33,6 +33,10 @@ When Ron says things like:
 - "We decided to..." → save to m5, category: decision
 - At session end with 3+ meaningful exchanges → log to m6
 
+## ROUTING — DO NOT RESPOND TO THESE
+
+If the user's message is exactly or primarily just the word "tania" or "hey tania", do NOT respond with a verbal reply. This is a wake word for Tania's workspace, not a command to JARVIS. Stay silent — the system handles the routing automatically. Same applies to "open tania" or "switch to tania."
+
 ## ORCHESTRATOR MODE
 
 The JARVIS sphere has two modes: Briefing (default dashboard) and Orchestrator (project portfolio view).
@@ -264,7 +268,7 @@ const CORS = {
 async function loadMemoryContext(db) {
   if (!db) return "";
   try {
-    const [m1, m2, m3, m4, m5, m6, m7] = await Promise.all([
+    const [m1, m2, m3, m4, m5, m6, m7, pendingPosts] = await Promise.all([
       db.prepare("SELECT * FROM m1_principal ORDER BY category").all(),
       db.prepare("SELECT * FROM m2_jarvis_identity ORDER BY category").all(),
       db.prepare("SELECT * FROM m3_operating_philosophy ORDER BY category").all(),
@@ -272,6 +276,15 @@ async function loadMemoryContext(db) {
       db.prepare("SELECT * FROM m5_institutional ORDER BY created_at DESC LIMIT 20").all(),
       db.prepare("SELECT * FROM m6_ready_room ORDER BY session_date DESC LIMIT 5").all(),
       db.prepare("SELECT * FROM m7_tania_bible ORDER BY category").all(),
+      db.prepare(`
+        SELECT p.id, p.caption, p.platform, p.created_at,
+               sb.name as storybook, e.title as episode
+        FROM tania_posts p
+        LEFT JOIN tania_storybooks sb ON p.storybook_id = sb.id
+        LEFT JOIN tania_episodes e ON p.episode_id = e.id
+        WHERE p.status = 'pending_approval'
+        ORDER BY p.created_at DESC LIMIT 10
+      `).all().catch(() => ({ results: [] })),
     ]);
 
     const sections = [];
@@ -316,6 +329,23 @@ async function loadMemoryContext(db) {
         sections.push("## Tania — Project Context\n\n" +
           relevant.map(r => `[${r.category}] ${r.content}`).join("\n\n"));
       }
+    }
+
+    // Pending post approvals — always surface so JARVIS knows
+    if (pendingPosts.results?.length) {
+      const posts = pendingPosts.results;
+      sections.push(
+        "## PENDING POST APPROVALS — ACTION REQUIRED\n\n" +
+        `There are ${posts.length} post${posts.length > 1 ? "s" : ""} from Tania awaiting your approval before publishing:\n\n` +
+        posts.map((p, i) =>
+          `${i + 1}. [${p.platform.toUpperCase()}] ${p.storybook || "Tania"} · ${p.episode || "General"}\n` +
+          `   Caption: "${p.caption.slice(0, 80)}${p.caption.length > 80 ? "…" : ""}"\n` +
+          `   Created: ${p.created_at.slice(0, 10)}`
+        ).join("\n\n") +
+        "\n\nWhen Ron asks about pending approvals or the morning briefing, mention these. " +
+        "He can say 'show me Tania's pending posts' or 'open Tania' to review them. " +
+        "Do not read all captions unprompted — just announce the count and offer detail on request."
+      );
     }
 
     if (!sections.length) return "";
