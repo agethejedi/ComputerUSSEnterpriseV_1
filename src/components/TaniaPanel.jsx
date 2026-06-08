@@ -229,6 +229,82 @@ function CharacterCard({ char, onApprove, onEdit }) {
   );
 }
 
+// ── Post approval card ────────────────────────────────────────────────────────
+function PostCard({ post, onApprove, onSchedule, onReject }) {
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [showSchedule, setShowSchedule] = useState(false);
+  const statusColor = {
+    pending_approval: "rgba(251,191,36,0.6)",
+    approved:         "rgba(34,197,94,0.6)",
+    scheduled:        "rgba(59,130,246,0.6)",
+    published:        "rgba(167,139,250,0.6)",
+    rejected:         "rgba(251,113,133,0.45)",
+    publish_failed:   "rgba(239,68,68,0.6)",
+  }[post.status] || "rgba(201,150,90,0.4)";
+
+  return (
+    <div style={{ border:`0.5px solid rgba(201,150,90,0.18)`, borderRadius:2, background:"rgba(201,150,90,0.03)", marginBottom:8, overflow:"hidden" }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"6px 10px", borderBottom:`0.5px solid rgba(201,150,90,0.08)`, background:"rgba(0,0,0,0.12)" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+          <span style={{ fontSize:10 }}>📱</span>
+          <span style={{ fontSize:8, letterSpacing:"0.15em", color:"rgba(201,150,90,0.5)" }}>
+            {post.platform?.toUpperCase()} · {post.storybook_name || "TANIA"}
+          </span>
+        </div>
+        <span style={{ fontSize:7, letterSpacing:"0.1em", padding:"1px 6px", borderRadius:2, color:statusColor, border:`0.5px solid ${statusColor.replace("0.6","0.25").replace("0.45","0.2")}` }}>
+          {post.status?.replace("_"," ").toUpperCase()}
+        </span>
+      </div>
+      <div style={{ padding:"10px 12px" }}>
+        <div style={{ fontSize:11, lineHeight:1.75, color:"rgba(240,210,170,0.82)", fontFamily:"Georgia,serif", fontStyle:"italic", marginBottom:8, whiteSpace:"pre-wrap" }}>
+          {post.caption}
+        </div>
+        {post.image_prompt && (
+          <div style={{ fontSize:9, color:"rgba(167,139,250,0.45)", fontFamily:"ui-monospace,monospace", padding:"6px 8px", background:"rgba(167,139,250,0.04)", borderRadius:2, marginBottom:8, lineHeight:1.6 }}>
+            🎨 {post.image_prompt.slice(0,120)}{post.image_prompt.length>120?"…":""}
+          </div>
+        )}
+        <div style={{ fontSize:8, color:"rgba(201,150,90,0.3)", marginBottom:post.status==="pending_approval"?8:0 }}>
+          {post.created_at?.slice(0,10)} · {post.episode_title || "General"}
+        </div>
+
+        {post.status === "pending_approval" && (
+          <>
+            {showSchedule ? (
+              <div style={{ display:"flex", gap:5, alignItems:"center", marginTop:6 }}>
+                <input type="datetime-local" value={scheduleTime}
+                  onChange={e => setScheduleTime(e.target.value)}
+                  style={{ flex:1, background:"rgba(59,130,246,0.06)", border:"0.5px solid rgba(59,130,246,0.25)", borderRadius:2, padding:"3px 6px", fontSize:9, color:"rgba(147,197,253,0.7)", outline:"none" }}/>
+                <button onClick={() => { if (scheduleTime) onSchedule(post.id, new Date(scheduleTime).toISOString()); setShowSchedule(false); }}
+                  style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 8px", borderRadius:2, color:"rgba(59,130,246,0.7)", border:"0.5px solid rgba(59,130,246,0.3)", background:"transparent", cursor:"pointer" }}>
+                  SET
+                </button>
+                <button onClick={() => setShowSchedule(false)}
+                  style={{ fontSize:7, padding:"3px 6px", color:"rgba(201,150,90,0.4)", border:"none", background:"transparent", cursor:"pointer" }}>✕</button>
+              </div>
+            ) : (
+              <div style={{ display:"flex", gap:5, marginTop:6 }}>
+                <button onClick={() => onApprove(post.id)}
+                  style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 10px", borderRadius:2, color:"rgba(34,197,94,0.7)", border:"0.5px solid rgba(34,197,94,0.28)", background:"rgba(34,197,94,0.06)", cursor:"pointer" }}>
+                  APPROVE NOW
+                </button>
+                <button onClick={() => setShowSchedule(true)}
+                  style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 10px", borderRadius:2, color:"rgba(59,130,246,0.6)", border:"0.5px solid rgba(59,130,246,0.25)", background:"transparent", cursor:"pointer" }}>
+                  SCHEDULE
+                </button>
+                <button onClick={() => onReject(post.id)}
+                  style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 10px", borderRadius:2, color:"rgba(251,113,133,0.55)", border:"0.5px solid rgba(251,113,133,0.22)", background:"transparent", cursor:"pointer" }}>
+                  REJECT
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── TTS ───────────────────────────────────────────────────────────────────────
 async function speakAsTania(text, voiceId = "knJcCBNKPnJDauT52tkc") {
   try {
@@ -369,14 +445,36 @@ function useCanvasInput({ onSubmit, storybookId, episodeId, isActive }) {
 }
 
 // ── Session auto-log ──────────────────────────────────────────────────────────
-async function autoLogSession(messages, storybookId, episodeId) {
+async function autoLogSession(messages, apiMessages, storybookId, episodeId) {
   const userMsgs = messages.filter(m => m.role === "ron");
   if (userMsgs.length < 2) return;
-  const topics = userMsgs.slice(-4).map(m => m.content?.slice(0,60)).filter(Boolean).join(" | ");
+  const topics = userMsgs.slice(-4).map(m => m.content?.slice(0, 60)).filter(Boolean).join(" | ");
+  // Pass full API message history for memory extraction
+  // Filter out image content blocks — keep only text for storage
+  const cleanTranscript = (apiMessages || [])
+    .filter(m => m.role === "user" || m.role === "assistant")
+    .map(m => ({
+      role: m.role,
+      content: typeof m.content === "string"
+        ? m.content
+        : Array.isArray(m.content)
+          ? m.content.filter(b => b.type === "text").map(b => b.text).join(" ")
+          : String(m.content),
+    }))
+    .filter(m => m.content && m.content.trim() && !m.content.startsWith("[Session opening]"));
   try {
     await fetch("/api/tania", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ logSession:{ summary:`Session: ${topics}`, exchanges:userMsgs.length, storybook_id:storybookId, episode_id:episodeId } }),
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        logSession: {
+          summary: `Session: ${topics}`,
+          exchanges: userMsgs.length,
+          storybook_id: storybookId,
+          episode_id: episodeId,
+          transcript: cleanTranscript,
+        }
+      }),
     });
   } catch {}
 }
@@ -397,6 +495,8 @@ export default function TaniaPanel({ isOpen, onClose }) {
   const [prompts, setPrompts]         = useState([]);
   const [characters, setCharacters]   = useState([]);
   const [artifacts, setArtifacts]     = useState([]);
+  const [posts, setPosts]             = useState([]);
+  const [pendingCount, setPendingCount] = useState(0);
 
   // Conversation
   const [messages, setMessages]       = useState([]);
@@ -442,8 +542,43 @@ export default function TaniaPanel({ isOpen, onClose }) {
         });
       }
     }).catch(() => {});
+    // Load pending post count for badge
+    fetch("/api/instagram?resource=pending_count")
+      .then(r => r.json()).then(d => setPendingCount(d.count || 0)).catch(() => {});
     setTimeout(() => inputRef.current?.focus(), 300);
   }, [isOpen]);
+
+  const approvePost = async (id) => {
+    await fetch("/api/instagram?resource=approve_post", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ id }),
+    }).then(r => r.json()).catch(() => {});
+    setPosts(prev => prev.map(p => p.id===id ? {...p, status:"approved"} : p));
+    setPendingCount(n => Math.max(0, n - 1));
+    setMessages(prev => [...prev, { role:"tania", content:"Post approved. It will publish when an image is attached.", id:Date.now() }]);
+  };
+
+  const schedulePost = async (id, scheduledAt) => {
+    await fetch("/api/instagram?resource=approve_post", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ id, scheduled_at: scheduledAt }),
+    }).then(r => r.json()).catch(() => {});
+    setPosts(prev => prev.map(p => p.id===id ? {...p, status:"scheduled", scheduled_at:scheduledAt} : p));
+    setPendingCount(n => Math.max(0, n - 1));
+    const dt = new Date(scheduledAt).toLocaleString();
+    setMessages(prev => [...prev, { role:"tania", content:`Scheduled for ${dt}.`, id:Date.now() }]);
+  };
+
+  const rejectPost = async (id) => {
+    const notes = window.prompt("Revision notes for Tania:");
+    await fetch("/api/instagram?resource=reject_post", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ id, revision_notes: notes || "" }),
+    }).then(r => r.json()).catch(() => {});
+    setPosts(prev => prev.map(p => p.id===id ? {...p, status:"rejected"} : p));
+    setPendingCount(n => Math.max(0, n - 1));
+    setMessages(prev => [...prev, { role:"tania", content:`Understood. I'll rework it.${notes ? " Your note: " + notes : ""}`, id:Date.now() }]);
+  };
 
   // Load content when episode or sub changes
   useEffect(() => {
@@ -677,7 +812,7 @@ export default function TaniaPanel({ isOpen, onClose }) {
             {stateLabel}
           </span>
         </div>
-        <button onClick={() => { autoLogSession(messages, activeStorybook?.id, activeEpisode?.id); onClose(); }}
+        <button onClick={() => { autoLogSession(messages, apiMessagesRef.current, activeStorybook?.id, activeEpisode?.id); onClose(); }}
           style={{ fontSize:9, letterSpacing:"0.18em", color:"rgba(251,113,133,0.55)", border:"0.5px solid rgba(251,113,133,0.25)", padding:"2px 10px", borderRadius:2, background:"transparent", cursor:"pointer" }}>
           ✕ CLOSE
         </button>
@@ -732,12 +867,20 @@ export default function TaniaPanel({ isOpen, onClose }) {
                   </div>
                   {activeEpisode?.id === ep.id && (
                     <div style={{ padding:"2px 12px 6px 26px" }}>
-                      {[["script","📄 Script"],["caption","💬 Caption"],["prompts","✨ Prompts"]].map(([sub,label]) => (
-                        <div key={sub} onClick={() => { setActiveSub(sub); surfaceContent(sub==="script"?scripts:sub==="caption"?captions:prompts, sub); }}
+                      {[["script","📄 Script"],["caption","💬 Caption"],["prompts","✨ Prompts"],["posts","📱 Posts"]].map(([sub,label]) => (
+                        <div key={sub} onClick={() => {
+                          setActiveSub(sub);
+                          if (sub === "posts") {
+                            fetch(`/api/instagram?resource=posts&storybook_id=${activeStorybook?.id||""}`)
+                              .then(r=>r.json()).then(d=>setPosts(d.posts||[])).catch(()=>{});
+                          } else {
+                            surfaceContent(sub==="script"?scripts:sub==="caption"?captions:prompts, sub);
+                          }
+                        }}
                           style={{ display:"flex", alignItems:"center", gap:5, padding:"4px 0", fontSize:9, letterSpacing:"0.1em", color:activeSub===sub?"rgba(201,150,90,0.78)":"rgba(201,150,90,0.32)", cursor:"pointer", borderBottom:`0.5px solid ${GX}` }}>
                           {label}
-                          <span style={{ marginLeft:"auto", fontSize:7, color:"rgba(201,150,90,0.22)" }}>
-                            {sub==="script"?`${scripts.length} ver`:sub==="caption"?`${captions.length} ver`:`${prompts.length}`}
+                          <span style={{ marginLeft:"auto", fontSize:7, color: sub==="posts" && pendingCount>0 ? "rgba(251,191,36,0.7)" : "rgba(201,150,90,0.22)" }}>
+                            {sub==="script"?`${scripts.length} ver`:sub==="caption"?`${captions.length} ver`:sub==="prompts"?`${prompts.length}`:pendingCount>0?`${pendingCount} pending`:""}
                           </span>
                         </div>
                       ))}
@@ -810,6 +953,29 @@ export default function TaniaPanel({ isOpen, onClose }) {
 
           {/* Dialogue */}
           <div ref={scrollRef} style={{ flex:1, overflowY:"auto", padding:"16px 18px", display:"flex", flexDirection:"column", gap:14 }}>
+
+            {/* Posts approval queue — surfaces when Posts sub is active */}
+            {activeSub === "posts" && posts.length > 0 && (
+              <div>
+                <div style={{ fontSize:8, letterSpacing:"0.25em", color:"rgba(201,150,90,0.35)", marginBottom:10 }}>
+                  POST QUEUE · {posts.filter(p=>p.status==="pending_approval").length} PENDING APPROVAL
+                </div>
+                {posts.map(p => (
+                  <PostCard key={p.id} post={p}
+                    onApprove={approvePost}
+                    onSchedule={schedulePost}
+                    onReject={rejectPost}
+                  />
+                ))}
+              </div>
+            )}
+
+            {activeSub === "posts" && posts.length === 0 && (
+              <div style={{ fontSize:11, color:"rgba(201,150,90,0.25)", fontFamily:"Georgia,serif", fontStyle:"italic", paddingTop:8 }}>
+                No posts yet. Ask Tania to package an episode for Instagram.
+              </div>
+            )}
+
             {messages.map(msg => {
               if (msg.role === "content-card") {
                 return (
