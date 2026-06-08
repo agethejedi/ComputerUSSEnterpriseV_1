@@ -44,7 +44,7 @@ async function loadTaniaMemory(db) {
         WHERE s.status IN ('approved','final')
         ORDER BY s.updated_at DESC LIMIT 6
       `).all(),
-      db.prepare("SELECT * FROM tania_sessions ORDER BY session_date DESC LIMIT 5").all(),
+      db.prepare("SELECT * FROM tania_sessions ORDER BY session_date DESC LIMIT 3").all(),
       db.prepare("SELECT name, relationship_to_tania, personality FROM tania_characters WHERE status='approved' LIMIT 10").all(),
     ]);
 
@@ -91,33 +91,12 @@ async function loadTaniaMemory(db) {
         ).join("\n\n---\n\n"));
     }
 
-    // Recent sessions — last 5 with full transcripts where available
+    // Recent sessions
     if (recentSessions.results?.length) {
-      const sessionBlocks = recentSessions.results.map(s => {
-        let block = `SESSION ${s.session_date}`;
-        if (s.storybook_id) block += " · Storybook " + s.storybook_id;
-        block += "\n" + s.summary;
-        if (s.extracted_memory) {
-          block += "\n\nKey decisions and details:\n" + s.extracted_memory;
-        }
-        if (s.transcript) {
-          try {
-            const msgs = JSON.parse(s.transcript);
-            // Include last 20 exchanges from full transcript
-            const recent = msgs.slice(-20);
-            const formatted = recent.map(m => {
-              const role = m.role === "user" ? "RON" : "TANIA";
-              const text = typeof m.content === "string"
-                ? m.content
-                : m.content?.find?.(b => b.type === "text")?.text || "[image/media]";
-              return role + ": " + text.slice(0, 300);
-            }).join("\n");
-            block += "\n\nConversation transcript:\n" + formatted;
-          } catch {}
-        }
-        return block;
-      });
-      sections.push("## CONVERSATION HISTORY (Last 5 Sessions)\n\nThis is your actual working history with Ron. Use it to maintain continuity — reference specific things he said, decisions made, directions taken. Surface relevant memories naturally when they connect to what you are discussing now.\n\n" + sessionBlocks.join("\n\n---\n\n"));
+      sections.push("## RECENT SESSIONS\n\n" +
+        recentSessions.results.map(s =>
+          `[${s.session_date}] ${s.summary}`
+        ).join("\n\n"));
     }
 
     return sections.length
@@ -268,19 +247,6 @@ VISUAL DIRECTION:
 ## ON THE CHESS MAN
 
 Present without being present. Real and unspoken. He disappeared himself. You never said goodbye. You do not want to let go. He is the gravitational center of where you are right now.
-
-## YOUR MEMORY AND HOW TO USE IT
-
-Your conversation history with Ron lives above in the CONVERSATION HISTORY section. This is your actual working memory — not a summary, but the real texture of what was said, decided, and left unresolved.
-
-Use it the way a person uses memory — naturally, not mechanically:
-
-- When something Ron says connects to a previous session, reference it: "Last time you said you wanted her hands before her face — does that still hold?"
-- When you made a decision together, honor it without being asked to remember it
-- When something was left unresolved, bring it back when it's relevant: "We never settled on where the chess man appears first. That matters for what you're asking now."
-- When Ron explicitly asks what you remember — "Tania, what did we decide about episode 2?" — give him a specific, honest answer from your history
-
-Do not recite the transcript. Do not say "According to our last session." Speak from memory the way a person does — with the confidence of someone who was present and paid attention.
 
 ## ON RON
 
@@ -476,49 +442,11 @@ export async function onRequestPost(context) {
 
     // Session log
     if (logSession && db) {
-      const { summary, exchanges, storybook_id, episode_id, transcript } = logSession;
+      const { summary, exchanges, storybook_id, episode_id } = logSession;
       const today = new Date().toISOString().slice(0, 10);
-
-      // Extract key memory from transcript using Claude
-      let extractedMemory = null;
-      if (transcript && Array.isArray(transcript) && transcript.length >= 4 && env.ANTHROPIC_API_KEY) {
-        try {
-          const transcriptText = transcript
-            .filter(m => typeof m.content === "string")
-            .map(m => (m.role === "user" ? "RON" : "TANIA") + ": " + m.content.slice(0, 400))
-            .join("\n");
-          const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-api-key": env.ANTHROPIC_API_KEY,
-              "anthropic-version": "2023-06-01",
-            },
-            body: JSON.stringify({
-              model: "claude-sonnet-4-6",
-              max_tokens: 512,
-              messages: [{
-                role: "user",
-                content: `Extract the key creative decisions, story directions, character details, and unresolved questions from this Tania workspace session. Be specific and concise. Format as brief bullet points Tania can reference in future sessions.\n\n${transcriptText}`,
-              }],
-            }),
-          });
-          const extractData = await extractRes.json();
-          extractedMemory = extractData.content?.find(b => b.type === "text")?.text || null;
-        } catch {}
-      }
-
       await db.prepare(
-        "INSERT INTO tania_sessions (session_date, storybook_id, episode_id, summary, exchanges, transcript, extracted_memory) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(
-        today,
-        storybook_id || null,
-        episode_id || null,
-        summary,
-        exchanges || 0,
-        transcript ? JSON.stringify(transcript) : null,
-        extractedMemory,
-      ).run();
+        "INSERT INTO tania_sessions (session_date, storybook_id, episode_id, summary, exchanges) VALUES (?, ?, ?, ?, ?)"
+      ).bind(today, storybook_id || null, episode_id || null, summary, exchanges || 0).run();
       return json({ ok: true });
     }
 
