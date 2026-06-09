@@ -38,6 +38,22 @@ async function igCreateContainer(accessToken, accountId, imageUrl, caption) {
   return data.id; // creation_id
 }
 
+// Poll until container status is FINISHED — required before publishing
+async function igWaitForContainer(accessToken, creationId, maxAttempts = 15) {
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 2000)); // 2 second wait between polls
+    const res = await fetch(
+      `https://graph.instagram.com/v18.0/${creationId}?fields=status_code&access_token=${accessToken}`
+    );
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    if (data.status_code === "FINISHED") return true;
+    if (data.status_code === "ERROR") throw new Error("Instagram container processing failed");
+    // IN_PROGRESS or PUBLISHED — keep polling
+  }
+  throw new Error("Container processing timed out — try publishing again in a few seconds");
+}
+
 async function igPublishContainer(accessToken, accountId, creationId) {
   const url = `https://graph.instagram.com/v18.0/${accountId}/media_publish`;
   const res = await fetch(url, {
@@ -280,10 +296,13 @@ async function publishPost(post, env, db) {
     // Step 1: Create media container
     const creationId = await igCreateContainer(accessToken, accountId, post.image_url, post.caption);
 
-    // Step 2: Publish container
+    // Step 2: Wait for container to be ready — Instagram requires this
+    await igWaitForContainer(accessToken, creationId);
+
+    // Step 3: Publish container
     const mediaId = await igPublishContainer(accessToken, accountId, creationId);
 
-    // Step 3: Get permalink
+    // Step 4: Get permalink
     const postUrl = await igGetPostUrl(accessToken, mediaId);
 
     // Update DB
