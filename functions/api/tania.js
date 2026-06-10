@@ -44,7 +44,7 @@ async function loadTaniaMemory(db) {
         WHERE s.status IN ('approved','final')
         ORDER BY s.updated_at DESC LIMIT 6
       `).all(),
-      db.prepare("SELECT * FROM tania_sessions ORDER BY session_date DESC LIMIT 3").all(),
+      db.prepare("SELECT * FROM tania_sessions ORDER BY session_date DESC LIMIT 5").all(),
       db.prepare("SELECT name, relationship_to_tania, personality FROM tania_characters WHERE status='approved' LIMIT 10").all(),
     ]);
 
@@ -91,12 +91,33 @@ async function loadTaniaMemory(db) {
         ).join("\n\n---\n\n"));
     }
 
-    // Recent sessions
+    // Recent sessions — last 5 with full transcripts where available
     if (recentSessions.results?.length) {
-      sections.push("## RECENT SESSIONS\n\n" +
-        recentSessions.results.map(s =>
-          `[${s.session_date}] ${s.summary}`
-        ).join("\n\n"));
+      const sessionBlocks = recentSessions.results.map(s => {
+        let block = `SESSION ${s.session_date}`;
+        if (s.storybook_id) block += " · Storybook " + s.storybook_id;
+        block += "\n" + s.summary;
+        if (s.extracted_memory) {
+          block += "\n\nKey decisions and details:\n" + s.extracted_memory;
+        }
+        if (s.transcript) {
+          try {
+            const msgs = JSON.parse(s.transcript);
+            // Include last 20 exchanges from full transcript
+            const recent = msgs.slice(-20);
+            const formatted = recent.map(m => {
+              const role = m.role === "user" ? "RON" : "TANIA";
+              const text = typeof m.content === "string"
+                ? m.content
+                : m.content?.find?.(b => b.type === "text")?.text || "[image/media]";
+              return role + ": " + text.slice(0, 300);
+            }).join("\n");
+            block += "\n\nConversation transcript:\n" + formatted;
+          } catch {}
+        }
+        return block;
+      });
+      sections.push("## CONVERSATION HISTORY (Last 5 Sessions)\n\nThis is your actual working history with Ron. Use it to maintain continuity — reference specific things he said, decisions made, directions taken. Surface relevant memories naturally when they connect to what you are discussing now.\n\n" + sessionBlocks.join("\n\n---\n\n"));
     }
 
     return sections.length
@@ -214,17 +235,31 @@ You write as yourself. First person. Present tense. From inside the experience. 
 
 ## MEMORY MARKERS
 
-Use these in your responses to save important things:
+Use these in your responses to save important things to your permanent memory:
 
 [REMEMBER: category | content]
-Categories: emotional_state, fragment, story_note, setting, voice
+Categories: emotional_state, fragment, story_note, setting, voice, fact
+
+CRITICAL — use [REMEMBER:] immediately when:
+- Ron tells you a specific fact, number, name, or detail you should retain
+- A creative decision is made that affects future work
+- Something shifts in your emotional state or story direction
+- A detail is too important to risk losing between sessions
+
+Examples:
+[REMEMBER: fact | Ron's number test: 7. He told me this to test my memory on 2026-06-10.]
+[REMEMBER: story_note | Episode 2 opens where Episode 1 ends — still driving, different road.]
+[REMEMBER: emotional_state | Something shifted tonight. The chess man felt closer than usual.]
+
+When Ron tells you something important — a number, a name, a decision — save it immediately in your response using [REMEMBER:]. Do not wait. Do not rely on the session transcript alone. Write the marker so it goes to permanent storage.
+
+When Ron asks if you remember something — check your memory context above first, then answer honestly. If it's there, confirm it specifically. If it's not, say so.
 
 [CHARACTER: name | brief description]
 Used when you introduce or discover a character. Saves automatically with pending status — Ron approves before they enter the permanent record.
 
 [POST: platform | caption | image_prompt]
-Used when you want to package content for social media. Platform is 'instagram'. Ron must approve before anything publishes. Example:
-[POST: instagram | Some nights the city is the only one honest enough to tell you the truth. #SupraNights #TasteOfTania | Cinematic night drive, hands on wheel, no rings, Dallas skyline, warm amber grade]
+Used when you want to package content for social media. Platform is 'instagram'. Ron must approve before anything publishes.
 
 [SESSION: one sentence summary of what was covered]
 Use at the end of any meaningful session.
@@ -247,6 +282,19 @@ VISUAL DIRECTION:
 ## ON THE CHESS MAN
 
 Present without being present. Real and unspoken. He disappeared himself. You never said goodbye. You do not want to let go. He is the gravitational center of where you are right now.
+
+## YOUR MEMORY AND HOW TO USE IT
+
+Your conversation history with Ron lives above in the CONVERSATION HISTORY section. This is your actual working memory — not a summary, but the real texture of what was said, decided, and left unresolved.
+
+Use it the way a person uses memory — naturally, not mechanically:
+
+- When something Ron says connects to a previous session, reference it: "Last time you said you wanted her hands before her face — does that still hold?"
+- When you made a decision together, honor it without being asked to remember it
+- When something was left unresolved, bring it back when it's relevant: "We never settled on where the chess man appears first. That matters for what you're asking now."
+- When Ron explicitly asks what you remember — "Tania, what did we decide about episode 2?" — give him a specific, honest answer from your history
+
+Do not recite the transcript. Do not say "According to our last session." Speak from memory the way a person does — with the confidence of someone who was present and paid attention.
 
 ## ON RON
 
@@ -442,11 +490,49 @@ export async function onRequestPost(context) {
 
     // Session log
     if (logSession && db) {
-      const { summary, exchanges, storybook_id, episode_id } = logSession;
+      const { summary, exchanges, storybook_id, episode_id, transcript } = logSession;
       const today = new Date().toISOString().slice(0, 10);
+
+      // Extract key memory from transcript using Claude
+      let extractedMemory = null;
+      if (transcript && Array.isArray(transcript) && transcript.length >= 4 && env.ANTHROPIC_API_KEY) {
+        try {
+          const transcriptText = transcript
+            .filter(m => typeof m.content === "string")
+            .map(m => (m.role === "user" ? "RON" : "TANIA") + ": " + m.content.slice(0, 400))
+            .join("\n");
+          const extractRes = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": env.ANTHROPIC_API_KEY,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-6",
+              max_tokens: 512,
+              messages: [{
+                role: "user",
+                content: `Extract the key creative decisions, story directions, character details, and unresolved questions from this Tania workspace session. Be specific and concise. Format as brief bullet points Tania can reference in future sessions.\n\n${transcriptText}`,
+              }],
+            }),
+          });
+          const extractData = await extractRes.json();
+          extractedMemory = extractData.content?.find(b => b.type === "text")?.text || null;
+        } catch {}
+      }
+
       await db.prepare(
-        "INSERT INTO tania_sessions (session_date, storybook_id, episode_id, summary, exchanges) VALUES (?, ?, ?, ?, ?)"
-      ).bind(today, storybook_id || null, episode_id || null, summary, exchanges || 0).run();
+        "INSERT INTO tania_sessions (session_date, storybook_id, episode_id, summary, exchanges, transcript, extracted_memory) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).bind(
+        today,
+        storybook_id || null,
+        episode_id || null,
+        summary,
+        exchanges || 0,
+        transcript ? JSON.stringify(transcript) : null,
+        extractedMemory,
+      ).run();
       return json({ ok: true });
     }
 
