@@ -200,29 +200,104 @@ function Message({ role, content }) {
 }
 
 // ── Character card ────────────────────────────────────────────────────────────
-function CharacterCard({ char, onApprove, onEdit }) {
-  const [expanded, setExpanded] = useState(false);
+function CharacterCard({ char, onApprove, onSave, onCollateralAdd }) {
+  const [expanded, setExpanded]     = useState(false);
+  const [editing, setEditing]       = useState(false);
+  const [collateral, setCollateral] = useState([]);
+  const [loadedCol, setLoadedCol]   = useState(false);
   const isPending = char.status === "pending";
+  const colInputId = useRef("col-" + char.id + "-" + Math.random().toString(36).slice(2));
+  const [fields, setFields] = useState({
+    name: char.name||"", age: char.age||"", appearance: char.appearance||"",
+    style: char.style||"", profession: char.profession||"", personality: char.personality||"",
+    habits: char.habits||"", background: char.background||"",
+    relationship_to_tania: char.relationship_to_tania||"", notes: char.notes||"",
+  });
+
+  const loadCollateral = async () => {
+    if (loadedCol) return;
+    const d = await fetch("/api/tania?resource=characters_get_collateral", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ character_id: char.id }),
+    }).then(r=>r.json()).catch(()=>({ collateral:[] }));
+    setCollateral(d.collateral || []);
+    setLoadedCol(true);
+  };
+
+  const handleExpand = () => { const n = !expanded; setExpanded(n); if (n) loadCollateral(); };
+
+  const handleSave = async () => { await onSave(char.id, fields); setEditing(false); };
+
+  const handleFileAdd = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const type = file.type.startsWith("image/") ? "image" : "file";
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const content = type === "image" ? ev.target.result : (ev.target.result||"").slice(0,3000);
+      await onCollateralAdd(char.id, file.name, type, content, char.storybook_id);
+      setLoadedCol(false); loadCollateral();
+    };
+    type === "image" ? reader.readAsDataURL(file) : reader.readAsText(file);
+  };
+
   return (
     <div style={{ border:`0.5px solid ${isPending?"rgba(251,191,36,0.25)":GD}`, borderRadius:2, background:"rgba(201,150,90,0.03)", marginBottom:6, overflow:"hidden" }}>
-      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 12px", cursor:"pointer" }} onClick={() => setExpanded(e => !e)}>
-        <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-          {isPending && <span style={{ fontSize:7, padding:"1px 5px", borderRadius:2, color:"rgba(251,191,36,0.6)", border:"0.5px solid rgba(251,191,36,0.25)", background:"rgba(251,191,36,0.07)" }}>PENDING</span>}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"7px 10px", cursor:"pointer" }} onClick={handleExpand}>
+        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+          {isPending && <span style={{ fontSize:7, padding:"1px 5px", borderRadius:2, color:"rgba(251,191,36,0.65)", border:"0.5px solid rgba(251,191,36,0.25)", background:"rgba(251,191,36,0.07)" }}>PENDING</span>}
           <span style={{ fontSize:10, color:"rgba(240,200,122,0.75)" }}>{char.name}</span>
           {char.storybook_name && <span style={{ fontSize:8, color:"rgba(201,150,90,0.3)" }}>{char.storybook_name}</span>}
         </div>
-        <span style={{ fontSize:10, color:"rgba(201,150,90,0.3)" }}>{expanded ? "▲" : "▼"}</span>
+        <span style={{ fontSize:9, color:"rgba(201,150,90,0.3)" }}>{expanded ? "▲" : "▼"}</span>
       </div>
       {expanded && (
-        <div style={{ padding:"8px 12px", borderTop:`0.5px solid ${GX}` }}>
-          {char.relationship_to_tania && <p style={{ fontSize:10, color:"rgba(240,200,122,0.65)", fontFamily:"Georgia,serif", fontStyle:"italic", lineHeight:1.7, marginBottom:8 }}>{char.relationship_to_tania}</p>}
-          {char.appearance && <p style={{ fontSize:9, color:"rgba(201,150,90,0.45)", lineHeight:1.6, marginBottom:4 }}><strong style={{color:"rgba(201,150,90,0.35)"}}>Appearance</strong> — {char.appearance}</p>}
-          {char.personality && <p style={{ fontSize:9, color:"rgba(201,150,90,0.45)", lineHeight:1.6, marginBottom:4 }}><strong style={{color:"rgba(201,150,90,0.35)"}}>Personality</strong> — {char.personality}</p>}
-          {char.notes && <p style={{ fontSize:9, color:"rgba(201,150,90,0.35)", lineHeight:1.6, marginTop:6, fontStyle:"italic" }}>{char.notes}</p>}
-          <div style={{ display:"flex", gap:5, marginTop:8 }}>
-            {isPending && <button onClick={() => onApprove(char.id)} style={{ fontSize:7, letterSpacing:"0.1em", padding:"2px 8px", borderRadius:2, cursor:"pointer", color:"rgba(34,197,94,0.65)", border:"0.5px solid rgba(34,197,94,0.28)", background:"transparent" }}>APPROVE</button>}
-            <button onClick={() => onEdit(char)} style={{ fontSize:7, letterSpacing:"0.1em", padding:"2px 8px", borderRadius:2, cursor:"pointer", color:"rgba(201,150,90,0.45)", border:`0.5px solid ${GD}`, background:"transparent" }}>EDIT</button>
-          </div>
+        <div style={{ borderTop:`0.5px solid ${GX}` }}>
+          {editing ? (
+            <div style={{ padding:"10px 10px 6px" }}>
+              {[["name","Name"],["age","Age"],["profession","Profession"],["appearance","Appearance"],
+                ["style","Style"],["personality","Personality"],["habits","Habits"],["background","Background"],
+                ["relationship_to_tania","Relationship to Tania"],["notes","Notes"]].map(([key,label]) => (
+                <div key={key} style={{ marginBottom:6 }}>
+                  <div style={{ fontSize:8, letterSpacing:"0.15em", color:"rgba(201,150,90,0.35)", marginBottom:2 }}>{label.toUpperCase()}</div>
+                  <textarea value={fields[key]} onChange={e => setFields(f=>({...f,[key]:e.target.value}))}
+                    rows={["relationship_to_tania","notes","personality"].includes(key)?3:1}
+                    style={{ width:"100%", background:"rgba(201,150,90,0.04)", border:`0.5px solid ${GD}`, borderRadius:2, padding:"4px 6px", fontSize:10, color:"rgba(240,200,122,0.75)", fontFamily:"inherit", resize:"vertical", outline:"none" }}/>
+                </div>
+              ))}
+              <div style={{ display:"flex", gap:5, marginTop:8 }}>
+                <button onClick={handleSave} style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 10px", borderRadius:2, color:"rgba(34,197,94,0.7)", border:"0.5px solid rgba(34,197,94,0.28)", background:"rgba(34,197,94,0.06)", cursor:"pointer" }}>SAVE</button>
+                <button onClick={()=>setEditing(false)} style={{ fontSize:7, padding:"3px 8px", color:"rgba(201,150,90,0.4)", border:`0.5px solid ${GD}`, borderRadius:2, background:"transparent", cursor:"pointer" }}>CANCEL</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding:"8px 10px" }}>
+              {char.relationship_to_tania && <p style={{ fontSize:11, color:"rgba(240,210,170,0.75)", fontFamily:"Georgia,serif", fontStyle:"italic", lineHeight:1.7, marginBottom:8 }}>{char.relationship_to_tania}</p>}
+              {[["appearance","Appearance"],["personality","Personality"],["profession","Profession"],["age","Age"],["style","Style"],["habits","Habits"],["background","Background"]].map(([k,l]) =>
+                char[k] ? <p key={k} style={{ fontSize:9, color:"rgba(201,150,90,0.45)", lineHeight:1.6, marginBottom:3 }}><strong style={{color:"rgba(201,150,90,0.35)"}}>{l}</strong> — {char[k]}</p> : null
+              )}
+              {char.notes && <p style={{ fontSize:9, color:"rgba(201,150,90,0.32)", fontStyle:"italic", marginTop:5, lineHeight:1.6 }}>{char.notes}</p>}
+              {collateral.length > 0 && (
+                <div style={{ marginTop:8, borderTop:`0.5px solid ${GX}`, paddingTop:8 }}>
+                  <div style={{ fontSize:8, letterSpacing:"0.2em", color:"rgba(167,139,250,0.35)", marginBottom:5 }}>COLLATERAL</div>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+                    {collateral.map(c => (
+                      <div key={c.id} style={{ display:"flex", alignItems:"center", gap:4, border:"0.5px solid rgba(167,139,250,0.15)", borderRadius:2, padding:"3px 7px", background:"rgba(167,139,250,0.04)" }}>
+                        {c.type==="image"&&c.content?.startsWith("data:") ? <img src={c.content} alt={c.name} style={{width:28,height:28,objectFit:"cover",borderRadius:1}}/> : <span style={{fontSize:12}}>{c.type==="image"?"🖼":"📄"}</span>}
+                        <span style={{ fontSize:8, color:"rgba(167,139,250,0.45)" }}>{c.name.slice(0,16)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div style={{ display:"flex", gap:5, marginTop:8, flexWrap:"wrap" }}>
+                {isPending && <button onClick={()=>onApprove(char.id)} style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 8px", borderRadius:2, color:"rgba(34,197,94,0.65)", border:"0.5px solid rgba(34,197,94,0.28)", background:"rgba(34,197,94,0.06)", cursor:"pointer" }}>APPROVE</button>}
+                <button onClick={()=>setEditing(true)} style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 8px", borderRadius:2, color:"rgba(201,150,90,0.5)", border:`0.5px solid ${GD}`, background:"transparent", cursor:"pointer" }}>EDIT</button>
+                <input id={colInputId.current} type="file" accept="image/*,.txt,.md,.pdf" style={{display:"none"}} onChange={handleFileAdd}/>
+                <label htmlFor={colInputId.current} style={{ fontSize:7, letterSpacing:"0.1em", padding:"3px 8px", borderRadius:2, color:"rgba(167,139,250,0.5)", border:"0.5px solid rgba(167,139,250,0.2)", background:"transparent", cursor:"pointer" }}>+ COLLATERAL</label>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -751,6 +826,11 @@ export default function TaniaPanel({ isOpen, onClose }) {
         if (responseText.includes("VOICEOVER:") && activeEpisode) {
           api(`?resource=scripts&episode_id=${activeEpisode.id}`).then(d => setScripts(d.scripts||[]));
         }
+        // Refresh characters if she created one
+        if (responseText.includes("[CHARACTER:") && section === "characters") {
+          const q = activeStorybook ? `?resource=characters&storybook_id=${activeStorybook.id}&status=all` : "?resource=characters&status=all";
+          api(q).then(d => setCharacters(d.characters||[])).catch(()=>{});
+        }
       }
     } catch {
       setMessages(prev => [...prev, {role:"tania",content:"Something pulled me away. Give me a moment.",id:Date.now()}]);
@@ -943,7 +1023,16 @@ export default function TaniaPanel({ isOpen, onClose }) {
                 {characters.map(c => (
                   <CharacterCard key={c.id} char={c}
                     onApprove={approveCharacter}
-                    onEdit={(char) => setEditingChar(char)}
+                    onSave={async (id, fields) => {
+                      await api("?resource=characters_update", { method:"POST", body:JSON.stringify({id, fields}) });
+                      setCharacters(prev => prev.map(ch => ch.id===id ? {...ch,...fields} : ch));
+                    }}
+                    onCollateralAdd={async (characterId, name, type, content, storybookId) => {
+                      await api("?resource=characters_add_collateral", {
+                        method:"POST",
+                        body: JSON.stringify({ character_id:characterId, name, type, content, storybook_id:storybookId }),
+                      });
+                    }}
                   />
                 ))}
               </div>
