@@ -701,7 +701,7 @@ export default function TaniaPanel({ isOpen, onClose }) {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           messages: apiMessagesRef.current,
-          skipMemory: apiMessagesRef.current.length > 2,
+          skipMemory: false, // always load memory — Tania needs full context every call
           currentEpisodeId: activeEpisode?.id,
           currentStorybookId: activeStorybook?.id,
         }),
@@ -735,7 +735,7 @@ export default function TaniaPanel({ isOpen, onClose }) {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           messages: apiMessagesRef.current,
-          skipMemory: apiMessagesRef.current.length > 2,
+          skipMemory: false, // always load memory — Tania needs full context every call
           currentEpisodeId: activeEpisode?.id,
           currentStorybookId: activeStorybook?.id,
         }),
