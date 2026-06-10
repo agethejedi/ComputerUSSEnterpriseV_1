@@ -355,9 +355,17 @@ export async function onRequestGet(context) {
     if (resource === 'characters') {
       const sbId   = url.searchParams.get('storybook_id');
       const status = url.searchParams.get('status') || 'approved';
-      const q = sbId
-        ? db.prepare("SELECT * FROM tania_characters WHERE storybook_id=? AND status=? ORDER BY name").bind(sbId, status)
-        : db.prepare("SELECT * FROM tania_characters WHERE status=? ORDER BY name").bind(status);
+      const all    = status === 'all';
+      let q;
+      if (sbId && all) {
+        q = db.prepare(`SELECT c.*, s.name as storybook_name FROM tania_characters c LEFT JOIN tania_storybooks s ON c.storybook_id=s.id WHERE c.storybook_id=? ORDER BY c.status DESC, c.name`).bind(sbId);
+      } else if (sbId) {
+        q = db.prepare(`SELECT c.*, s.name as storybook_name FROM tania_characters c LEFT JOIN tania_storybooks s ON c.storybook_id=s.id WHERE c.storybook_id=? AND c.status=? ORDER BY c.name`).bind(sbId, status);
+      } else if (all) {
+        q = db.prepare(`SELECT c.*, s.name as storybook_name FROM tania_characters c LEFT JOIN tania_storybooks s ON c.storybook_id=s.id ORDER BY c.status DESC, c.name`);
+      } else {
+        q = db.prepare(`SELECT c.*, s.name as storybook_name FROM tania_characters c LEFT JOIN tania_storybooks s ON c.storybook_id=s.id WHERE c.status=? ORDER BY c.name`).bind(status);
+      }
       const result = await q.all();
       return json({ characters: result.results || [] });
     }
@@ -409,17 +417,39 @@ export async function onRequestPost(context) {
   if (resource === 'characters_update') {
     if (!db) return json({ error: "DB not configured" }, 503);
     const { id, fields } = body;
-    const allowed = ['name','age','appearance','style','profession','personality','habits','background','relationship_to_tania','first_appears','notes','status'];
+    const allowed = ['name','age','appearance','style','profession','personality','habits','background','relationship_to_tania','first_appears','notes','status','storybook_id'];
     const sets = Object.entries(fields)
       .filter(([k]) => allowed.includes(k))
-      .map(([k]) => `${k}=?`).join(', ');
+      .map(([k]) => k + "=?").join(', ');
     const vals = Object.entries(fields)
       .filter(([k]) => allowed.includes(k))
       .map(([,v]) => v);
     if (!sets) return json({ error: "No valid fields" }, 400);
-    await db.prepare(`UPDATE tania_characters SET ${sets}, updated_at=datetime('now') WHERE id=?`)
+    await db.prepare("UPDATE tania_characters SET " + sets + ", updated_at=datetime('now') WHERE id=?")
       .bind(...vals, id).run();
     return json({ ok: true });
+  }
+
+  if (resource === 'characters_add_collateral') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { character_id, name, type, content, description, storybook_id } = body;
+    await db.prepare(
+      "INSERT INTO tania_artifacts (name, type, content, description, tags, storybook_id) VALUES (?, ?, ?, ?, ?, ?)"
+    ).bind(
+      name, type, content || '', description || '',
+      JSON.stringify(["character", "character_id:" + character_id]),
+      storybook_id || null,
+    ).run();
+    return json({ ok: true });
+  }
+
+  if (resource === 'characters_get_collateral') {
+    if (!db) return json({ error: "DB not configured" }, 503);
+    const { character_id } = body;
+    const result = await db.prepare(
+      "SELECT * FROM tania_artifacts WHERE tags LIKE ? ORDER BY created_at DESC"
+    ).bind('%character_id:' + character_id + '%').all();
+    return json({ collateral: result.results || [] });
   }
 
   if (resource === 'storybooks_create') {
