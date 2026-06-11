@@ -430,7 +430,7 @@ function loadMusicKit(developerToken) {
             version: "1.0.0",
           },
           storefrontId: "us",
-          suppressErrorDialog: true,
+          suppressErrorDialog: false,
         });
         resolve(window.MusicKit);
       } catch (err) { reject(err); }
@@ -470,15 +470,16 @@ export function useJarvisIntro({ onComplete, onSongInfo }) {
     let cancelled = false;
     setIntroState("loading");
 
-    // Hard timeout — if anything hangs for more than 8 seconds, skip
+    // Hard timeout — generous enough for auth popup interaction (30 seconds)
     const hardTimeout = setTimeout(() => {
       if (!cancelled && !completedRef.current) {
         console.warn("[JARVIS Intro] Hard timeout reached — skipping intro");
         setIntroState("skipped");
-        markIntroPlayed();
+        // Only mark played if we actually got through auth
+        // Don't mark here so user can try again tomorrow
         onComplete?.();
       }
-    }, 8000);
+    }, 30000);
 
     const initIntro = async () => {
       try {
@@ -550,11 +551,11 @@ export function useJarvisIntro({ onComplete, onSongInfo }) {
         const music = MusicKit.getInstance();
         musicRef.current = music;
 
-        // Authorize with timeout
+        // Authorize — give user up to 25 seconds to interact with the popup
         try {
           await Promise.race([
             music.authorize(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("auth timeout")), 5000)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("auth timeout")), 25000)),
           ]);
         } catch {
           console.warn("[JARVIS Intro] Auth failed or timed out");
