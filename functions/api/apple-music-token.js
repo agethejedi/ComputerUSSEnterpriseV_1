@@ -45,7 +45,14 @@ async function buildJWT(keyId, teamId, privateKeyPem) {
   const exp = now + 15897600; // 6 months
 
   const header = { alg: "ES256", kid: keyId };
-  const payload = { iss: teamId, iat: now, exp };
+  // origin claim required for MusicKit JS web authentication
+  // Without it authorize() returns 403 webPlayerLogout
+  const payload = {
+    iss: teamId,
+    iat: now,
+    exp,
+    origin: ["https://01a014a4.computerussenterprisev-1.pages.dev", "https://computerussenterprisev-1.pages.dev"],
+  };
 
   const encode = (obj) =>
     btoa(JSON.stringify(obj))
