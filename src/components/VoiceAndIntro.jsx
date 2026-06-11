@@ -418,7 +418,7 @@ function loadMusicKit(developerToken) {
   if (musicKitPromise) return musicKitPromise;
   musicKitPromise = new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = "https://js-cdn.music.apple.com/musickit/v3/musickit.js";
+    script.src = "https://js-cdn.music.apple.com/musickit/v1/musickit.js";
     script.crossOrigin = "";
     script.onload = async () => {
       try {
@@ -427,10 +427,7 @@ function loadMusicKit(developerToken) {
           app: {
             name: "JARVIS Dashboard",
             build: "1.0.0",
-            version: "1.0.0",
           },
-          storefrontId: "us",
-          suppressErrorDialog: false,
         });
         resolve(window.MusicKit);
       } catch (err) { reject(err); }
