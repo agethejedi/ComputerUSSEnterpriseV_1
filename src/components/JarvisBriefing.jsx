@@ -8,6 +8,7 @@ import SatellitePanel from "./SatellitePanel.jsx";
 import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
 import { useElevenLabsSpeak, useWakeWord, useMultiWakeWord, pauseWakeWords, resumeWakeWords, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
 import TaniaPanel from "./TaniaPanel.jsx";
+import FileIngestion, { buildFileContentBlocks } from "./FileIngestion.jsx";
 import JarvisSphere from "./JarvisSphere.jsx";
 
 const MODE_LABELS = {
@@ -260,6 +261,7 @@ async function executeToolCall(name, input, ctx) {
       }
       return JSON.stringify({ ok: true, action: name });
     }
+
     // ── Apple Music ───────────────────────────────────────────────────────────
     case "music_play_song": {
       if (!musicController) return JSON.stringify({ error: "Music controller not available." });
@@ -318,18 +320,18 @@ async function executeToolCall(name, input, ctx) {
       if (key && ctx.sphereRef?.current) {
         ctx.sphereRef.current.focusProject(key, input.autofade || 0);
       }
-      return JSON.stringify({ ok:true, focused: key });
+      return JSON.stringify({ ok: true, focused: key });
     }
     case "focus_memory": {
       const moduleId = input.module?.toLowerCase();
       if (moduleId && ctx.sphereRef?.current) {
         ctx.sphereRef.current.focusMem(moduleId, input.autofade || 0);
       }
-      return JSON.stringify({ ok:true, focused: moduleId });
+      return JSON.stringify({ ok: true, focused: moduleId });
     }
     case "clear_focus": {
       if (ctx.sphereRef?.current) ctx.sphereRef.current.clearFocus();
-      return JSON.stringify({ ok:true });
+      return JSON.stringify({ ok: true });
     }
 
     // ── Orchestrator mode ─────────────────────────────────────────────────────
@@ -341,8 +343,21 @@ async function executeToolCall(name, input, ctx) {
     // ── Memory write ──────────────────────────────────────────────────────────
     case "save_memory": {
       // D1 write is handled server-side in chat.js
-      // Client just needs to acknowledge the tool call completed
       return JSON.stringify({ ok: true, saved: true, module: input.module });
+    }
+
+    // ── Operator tools — executed server-side in chat.js ──────────────────────
+    // The frontend just needs to acknowledge these so they don't fall through
+    // to the default "Unknown tool" handler. The actual GitHub/Cloudflare API
+    // calls happen in chat.js executeOperatorTool() and results come back
+    // in the next Claude response turn.
+    case "deploy_project":
+    case "push_files":
+    case "check_deploy_status":
+    case "list_projects": {
+      // Result already executed server-side — return acknowledgement
+      // Claude will receive the operator_result in the response data
+      return JSON.stringify({ ok: true, tool: name, note: "Executed server-side" });
     }
 
     default:
@@ -427,7 +442,6 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
       if (typeof ResizeObserver !== "undefined") { observer = new ResizeObserver(() => map.invalidateSize()); observer.observe(mapRef.current); }
     })();
     return () => { cancelled = true; if (observer) observer.disconnect(); if (animTimerRef.current) clearTimeout(animTimerRef.current); if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -638,10 +652,10 @@ function ConversationPanel({ messages, highlighted }) {
 
 export default function JarvisBriefing() {
   const [mode, setMode] = useState("idle");
-  const [sphereMode, setSphereMode] = useState("briefing"); // "briefing" | "orchestrator"
+  const [sphereMode, setSphereMode] = useState("briefing");
   const [taniaOpen, setTaniaOpen] = useState(false);
+  const [ingestOpen, setIngestOpen] = useState(false);
 
-  // Sphere imperative ref — for focusProject / focusMem
   const sphereRef = useRef(null);
   const [holoCommand, setHoloCommand] = useState(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -691,12 +705,33 @@ export default function JarvisBriefing() {
 
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
 
+  // Time-aware greeting
+  const getTimeGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 5)  return "Good night";
+    if (hour < 12) return "Good morning";
+    if (hour < 17) return "Good afternoon";
+    if (hour < 21) return "Good evening";
+    return "Good night";
+  };
+
   // ── ElevenLabs TTS with Web Speech fallback + mobile unlock ───────────────
   const { speak, unlockSpeech } = useElevenLabsSpeak();
 
+  // Safety net — unlock audio on the very first tap/touch anywhere on the page
+  useEffect(() => {
+    const handler = () => { unlockSpeech(); };
+    document.addEventListener("touchstart", handler, { once: true, passive: true });
+    document.addEventListener("click", handler, { once: true });
+    return () => {
+      document.removeEventListener("touchstart", handler);
+      document.removeEventListener("click", handler);
+    };
+  }, [unlockSpeech]);
+
   // ── Daily Apple Music intro + boot overlay ────────────────────────────────
   const { introState, skipIntro } = useJarvisIntro({
-    onComplete: () => setTimeout(() => speak("Good morning. All systems online. How can I assist you today?"), 500),
+    onComplete: () => setTimeout(() => speak(`${getTimeGreeting()}. All systems online. How can I assist you today?`), 500),
     onSongInfo: (song) => setIntroSong(song),
   });
 
@@ -759,11 +794,12 @@ export default function JarvisBriefing() {
   const refreshActiveWatchlist = useCallback((symbols) => { fetchActiveMarketData(symbols); }, [fetchActiveMarketData]);
   const handleSwitchList = useCallback((name) => { setActiveWatchlistName(name); lsSaveActive(name); fetchActiveMarketData(watchlistsRef.current[name] || []); }, [fetchActiveMarketData]);
 
-  // ── Apple Music playback controller ─────────────────────────────────────
+  // ── Apple Music playback controller ──────────────────────────────────────
   const musicController = useMusicController();
 
   const sendToClaude = useCallback(async (userMessage) => {
     setMode("thinking");
+    // userMessage can be a string or a multimodal content blocks array
     let messages = [...apiMessagesRef.current, { role: "user", content: userMessage }];
 
     for (let round = 0; round < 6; round++) {
@@ -786,7 +822,6 @@ export default function JarvisBriefing() {
           setMode("speaking"); await speak(spokenText);
         } else { apiMessagesRef.current = messages; }
         setMode("idle");
-        // Auto-log session to M6 if conversation was substantial (3+ exchanges)
         const exchangeCount = apiMessagesRef.current.filter(m => m.role === "user").length;
         if (exchangeCount >= 3) {
           const today = new Date().toISOString().slice(0, 10);
@@ -800,15 +835,10 @@ export default function JarvisBriefing() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              action: "log_session",
-              module: "m6",
-              data: {
-                session_date: today,
-                session_type: "briefing",
-                summary: `Session with ${exchangeCount} exchanges. Topics: ${summary.slice(0, 300)}`,
-              }
+              action: "log_session", module: "m6",
+              data: { session_date: today, session_type: "briefing", summary: `Session with ${exchangeCount} exchanges. Topics: ${summary.slice(0, 300)}` }
             })
-          }).catch(() => {}); // Silent — don't block UI on memory write
+          }).catch(() => {});
         }
         return;
       }
@@ -843,7 +873,6 @@ export default function JarvisBriefing() {
     setVoiceError(null);
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { setVoiceError("Speech recognition not supported. Use Chrome, Edge, or Safari."); return; }
-    // Pause wake word session — mic belongs to command recognition now
     pauseWakeWords();
     const recognition = new SR();
     recognition.continuous = false; recognition.interimResults = true; recognition.lang = "en-US";
@@ -859,52 +888,29 @@ export default function JarvisBriefing() {
     recognition.onerror = (event) => {
       if (event.error !== "aborted" && event.error !== "no-speech") setVoiceError(`Voice error: ${event.error}`);
       isListeningRef.current = false; setMode("idle");
-      resumeWakeWords(); // give mic back to wake word session
+      resumeWakeWords();
     };
     recognition.onend = () => {
       isListeningRef.current = false; setInterimTranscript("");
       const text = finalTranscript.trim().toLowerCase();
       const reserved = ["tania", "hey tania", "jarvis", "hey jarvis"];
-      if (text && reserved.includes(text)) {
-        setMode("idle");
-        resumeWakeWords();
-        return;
-      }
+      if (text && reserved.includes(text)) { setMode("idle"); resumeWakeWords(); return; }
       if (finalTranscript.trim()) {
         setConversation((c) => [...c, { role: "user", display: finalTranscript.trim() }]);
         sendToClaude(finalTranscript.trim());
-      } else {
-        setMode("idle");
-      }
-      resumeWakeWords(); // mic back to wake words after command processed
+      } else { setMode("idle"); }
+      resumeWakeWords();
     };
     recognitionRef.current = recognition; isListeningRef.current = true; setMode("listening"); recognition.start();
   }, [sendToClaude, unlockSpeech]);
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current && isListeningRef.current) recognitionRef.current.stop();
-    // resumeWakeWords is called in recognition.onend above
   }, []);
 
-  // ── Single mic session — listens for both wake words simultaneously ───────
-  // One recognition instance shared. No mic flashing from competing sessions.
   useMultiWakeWord([
-    {
-      word: "jarvis",
-      onMatch: () => { unlockSpeech(); startListening(); },
-      enabled: mode === "idle" && !taniaOpen,
-    },
-    {
-      word: "tania",
-      onMatch: () => {
-        // Stop JARVIS listening immediately so "tania" isn't sent to /api/chat
-        if (isListeningRef.current) stopListening();
-        window.speechSynthesis?.cancel();
-        unlockSpeech();
-        setTaniaOpen(true);
-      },
-      enabled: sphereMode === "orchestrator" && !taniaOpen,
-    },
+    { word: "jarvis", onMatch: () => { unlockSpeech(); startListening(); }, enabled: mode === "idle" && !taniaOpen },
+    { word: "tania", onMatch: () => { if (isListeningRef.current) stopListening(); window.speechSynthesis?.cancel(); unlockSpeech(); setTaniaOpen(true); }, enabled: sphereMode === "orchestrator" && !taniaOpen },
   ]);
 
   useEffect(() => {
@@ -916,6 +922,18 @@ export default function JarvisBriefing() {
 
   const handleMicClick = () => { unlockSpeech(); if (mode === "idle") startListening(); else if (mode === "listening") stopListening(); };
 
+  const handleIngest = useCallback((contentBlocks, files, text) => {
+    if (!contentBlocks?.length) return;
+    // Build display label for conversation panel
+    const fileNames = files.map(f => f.name).join(", ");
+    const display = fileNames
+      ? `[Sent ${files.length} file${files.length > 1 ? "s" : ""}: ${fileNames}]${text ? " — " + text : ""}`
+      : text;
+    setConversation(c => [...c, { role: "user", display }]);
+    // Send multimodal message to Claude
+    sendToClaude(contentBlocks);
+  }, [sendToClaude]);
+
   const timeStr = now.toLocaleTimeString("en-US", { hour12: false });
   const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).toUpperCase();
   const activeSymbols = (watchlists[activeWatchlistName] || []);
@@ -923,8 +941,7 @@ export default function JarvisBriefing() {
   return (
     <div className="min-h-screen w-full text-slate-200 font-mono relative overflow-hidden" style={{ background: "radial-gradient(ellipse at center, #0B1626 0%, #060B14 60%, #03070D 100%)" }}>
 
-      {/* ── Daily intro boot overlay (Apple Music + boot sequence) ── */}
-      <IntroOverlay introState={introState} songInfo={introSong} onSkip={skipIntro} />
+      <IntroOverlay introState={introState} songInfo={introSong} onSkip={skipIntro} onTap={unlockSpeech} />
 
       <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: `linear-gradient(rgba(125,211,252,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(125,211,252,0.05) 1px,transparent 1px)`, backgroundSize: "32px 32px", maskImage: "radial-gradient(ellipse at center,black 30%,transparent 95%)", WebkitMaskImage: "radial-gradient(ellipse at center,black 30%,transparent 95%)" }} />
       <div className="absolute inset-0 pointer-events-none opacity-[0.04] mix-blend-overlay" style={{ backgroundImage: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence baseFrequency='0.9'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>")` }} />
@@ -942,7 +959,7 @@ export default function JarvisBriefing() {
       <div className="relative z-10 flex items-center justify-between px-6 py-3 border-b" style={{ borderColor: "#7DD3FC22" }}>
         <div className="flex items-center gap-4">
           <span className="text-[10px] tracking-[0.3em]" style={{ color: "#7DD3FC" }}>● JARVIS // INTERACTIVE</span>
-          <span className="text-[10px] tracking-[0.2em] opacity-50">v2.8.0</span>
+          <span className="text-[10px] tracking-[0.2em] opacity-50">v5.0.0</span>
         </div>
         <div className="flex items-center gap-6 text-[10px] tracking-[0.25em]">
           <span className="opacity-60">{dateStr}</span>
@@ -951,13 +968,9 @@ export default function JarvisBriefing() {
           <button
             onClick={() => setSphereMode(m => m === "orchestrator" ? "briefing" : "orchestrator")}
             className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
-            style={{
-              border: sphereMode === "orchestrator" ? "1px solid #c9a84c" : "1px solid #c9a84c44",
-              color: sphereMode === "orchestrator" ? "#c9a84c" : "#c9a84c88",
-              background: sphereMode === "orchestrator" ? "rgba(201,168,76,0.1)" : "transparent",
-              boxShadow: sphereMode === "orchestrator" ? "0 0 12px rgba(201,168,76,0.3)" : "none",
-            }}
-          >⬡ {sphereMode === "orchestrator" ? "BRIEFING" : "ORCHESTRATOR"}</button>
+            style={{ border: sphereMode === "orchestrator" ? "1px solid #c9a84c" : "1px solid #c9a84c44", color: sphereMode === "orchestrator" ? "#c9a84c" : "#c9a84c88", background: sphereMode === "orchestrator" ? "rgba(201,168,76,0.1)" : "transparent", boxShadow: sphereMode === "orchestrator" ? "0 0 12px rgba(201,168,76,0.3)" : "none" }}>
+            ⬡ {sphereMode === "orchestrator" ? "BRIEFING" : "ORCHESTRATOR"}
+          </button>
           <span className="opacity-50">SYS.{MODE_LABELS[mode]}</span>
         </div>
       </div>
@@ -978,16 +991,7 @@ export default function JarvisBriefing() {
             <div className="absolute -bottom-px -left-px w-3 h-3 border-b border-l" style={{ borderColor: "#7DD3FC" }} />
             <div className="absolute -bottom-px -right-px w-3 h-3 border-b border-r" style={{ borderColor: "#7DD3FC" }} />
             <div style={{ position: "relative", height: "320px" }}>
-              <JarvisSphere
-                ref={sphereRef}
-                mode={mode}
-                sphereMode={sphereMode}
-                onProjectClick={(key) => {
-                  if (key === "tania") setTaniaOpen(true);
-                }}
-              />
-
-
+              <JarvisSphere ref={sphereRef} mode={mode} sphereMode={sphereMode} onProjectClick={(key) => { if (key === "tania") setTaniaOpen(true); }} />
             </div>
             {interimTranscript && <div className="px-4 pb-2 text-center text-[11px] italic opacity-70" style={{ color: "#7DD3FC" }}>"{interimTranscript}"</div>}
             {voiceError && <div className="px-4 pb-2 text-center text-[10px]" style={{ color: "#FB7185" }}>{voiceError}</div>}
@@ -997,12 +1001,15 @@ export default function JarvisBriefing() {
                 style={{ borderColor: mode === "listening" ? "#FB7185" : "#7DD3FC", color: mode === "listening" ? "#FB7185" : "#7DD3FC", background: mode === "listening" ? "#FB718515" : "#7DD3FC15", boxShadow: `0 0 20px ${mode === "listening" ? "#FB7185" : "#7DD3FC"}40` }}>
                 {mode === "listening" ? "■ Stop" : "🎙 Tap or Hold Space"}
               </button>
+              <button onClick={() => setIngestOpen(true)} disabled={mode === "thinking" || mode === "speaking"}
+                className="px-4 py-2.5 text-xs tracking-[0.25em] uppercase border transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ borderColor: "rgba(201,150,90,0.4)", color: "rgba(201,150,90,0.7)", background: "rgba(201,150,90,0.06)", boxShadow: "0 0 12px rgba(201,150,90,0.15)" }}>
+                📎 Send File
+              </button>
             </div>
           </div>
-
           <ConversationPanel messages={conversation} highlighted={highlightedPanel === "transcript"} />
           <ResearchPanel externalCommand={researchCommand} />
-
           <div className="grid grid-cols-2 gap-3">
             <VideoFeed network="CNN" code="VID.01" panelKey="cnn" highlighted={highlightedPanel === "cnn"} />
             <VideoFeed network="BLOOMBERG" code="VID.02" panelKey="bloomberg" highlighted={highlightedPanel === "bloomberg"} />
@@ -1011,64 +1018,30 @@ export default function JarvisBriefing() {
 
         <div className="col-span-12 lg:col-span-3 space-y-3">
           <HolographicPanel externalCommand={holoCommand} />
-          <WatchlistPanel
-            highlighted={highlightedPanel === "watchlist"}
-            watchlists={watchlists} activeWatchlistName={activeWatchlistName}
-            marketData={marketData} session={marketSession}
-            loading={marketLoading} error={marketError}
-            onSwitchList={handleSwitchList} kvSource={kvSource}
-          />
-          <CommoditiesPanel
-            highlighted={highlightedPanel === "commodities"}
-            commodities={commodities} session={marketSession}
-            loading={marketLoading} error={marketError}
-          />
+          <WatchlistPanel highlighted={highlightedPanel === "watchlist"} watchlists={watchlists} activeWatchlistName={activeWatchlistName} marketData={marketData} session={marketSession} loading={marketLoading} error={marketError} onSwitchList={handleSwitchList} kvSource={kvSource} />
+          <CommoditiesPanel highlighted={highlightedPanel === "commodities"} commodities={commodities} session={marketSession} loading={marketLoading} error={marketError} />
         </div>
       </div>
 
-      {/* ── Full-screen Orchestrator Overlay ─────────────────────────────────── */}
       {sphereMode === "orchestrator" && (
-        <div className="fixed inset-0 z-40 flex flex-col"
-          style={{ background:"radial-gradient(ellipse at center, #0B1626 0%, #020617 100%)" }}>
-          <div className="absolute inset-0 pointer-events-none" style={{
-            backgroundImage:`linear-gradient(rgba(201,168,76,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(201,168,76,0.025) 1px,transparent 1px)`,
-            backgroundSize:"48px 48px",
-          }} />
-
-          {/* Top bar */}
-          <div className="flex items-center justify-between px-6 py-2.5 flex-shrink-0 border-b z-10"
-            style={{ borderColor:"rgba(201,168,76,0.15)", background:"rgba(2,4,8,0.92)" }}>
-            <div style={{ color:"#c9a84c", fontSize:"11px", letterSpacing:"0.3em", fontFamily:"ui-monospace,monospace" }}>
-              J·A·R·V·I·S
-            </div>
+        <div className="fixed inset-0 z-40 flex flex-col" style={{ background:"radial-gradient(ellipse at center, #0B1626 0%, #020617 100%)" }}>
+          <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage:`linear-gradient(rgba(201,168,76,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(201,168,76,0.025) 1px,transparent 1px)`, backgroundSize:"48px 48px" }} />
+          <div className="flex items-center justify-between px-6 py-2.5 flex-shrink-0 border-b z-10" style={{ borderColor:"rgba(201,168,76,0.15)", background:"rgba(2,4,8,0.92)" }}>
+            <div style={{ color:"#c9a84c", fontSize:"11px", letterSpacing:"0.3em", fontFamily:"ui-monospace,monospace" }}>J·A·R·V·I·S</div>
             <div className="flex items-center gap-2">
               {["ONLINE","SECURE","ENCRYPTED","AUTH-LV9"].map(label=>(
-                <div key={label} className="flex items-center gap-1 px-2 py-1"
-                  style={{ border:"1px solid rgba(201,168,76,0.18)", fontSize:"7px", letterSpacing:"0.12em", color:"rgba(201,168,76,0.5)" }}>
-                  <span style={{ width:4,height:4,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 4px #22c55e",display:"inline-block" }} />
-                  {label}
+                <div key={label} className="flex items-center gap-1 px-2 py-1" style={{ border:"1px solid rgba(201,168,76,0.18)", fontSize:"7px", letterSpacing:"0.12em", color:"rgba(201,168,76,0.5)" }}>
+                  <span style={{ width:4,height:4,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 4px #22c55e",display:"inline-block" }} />{label}
                 </div>
               ))}
-              <div className="px-3 py-1"
-                style={{ border:"1px solid rgba(201,168,76,0.5)",color:"#c9a84c",fontSize:"7.5px",letterSpacing:"0.15em",background:"rgba(201,168,76,0.06)",boxShadow:"0 0 10px rgba(201,168,76,0.2)" }}>
-                ⬡ ORCHESTRATOR
-              </div>
+              <div className="px-3 py-1" style={{ border:"1px solid rgba(201,168,76,0.5)",color:"#c9a84c",fontSize:"7.5px",letterSpacing:"0.15em",background:"rgba(201,168,76,0.06)",boxShadow:"0 0 10px rgba(201,168,76,0.2)" }}>⬡ ORCHESTRATOR</div>
             </div>
             <div className="flex items-center gap-4">
-              <span style={{ color:"#c9a84c",fontSize:"12px",letterSpacing:"0.12em",fontFamily:"ui-monospace,monospace" }}>
-                {now.toLocaleTimeString("en-US",{hour12:false})}
-              </span>
-              <button onClick={() => setSphereMode("briefing")}
-                className="px-4 py-1.5 text-[9px] tracking-[0.25em]"
-                style={{ border:"1px solid #FB7185",color:"#FB7185",background:"rgba(251,113,133,0.08)" }}>
-                ✕ BRIEFING
-              </button>
+              <span style={{ color:"#c9a84c",fontSize:"12px",letterSpacing:"0.12em",fontFamily:"ui-monospace,monospace" }}>{now.toLocaleTimeString("en-US",{hour12:false})}</span>
+              <button onClick={() => setSphereMode("briefing")} className="px-4 py-1.5 text-[9px] tracking-[0.25em]" style={{ border:"1px solid #FB7185",color:"#FB7185",background:"rgba(251,113,133,0.08)" }}>✕ BRIEFING</button>
             </div>
           </div>
-
-          {/* Main area */}
           <div className="flex-1 relative overflow-hidden">
-            {/* Left panel */}
             <div className="absolute left-4 top-5 z-10" style={{ width:130 }}>
               <div style={{ fontSize:"7px",letterSpacing:"0.25em",color:"rgba(201,168,76,0.4)",marginBottom:8 }}>{"{ SYSTEM VITALS"}</div>
               {[["NEURAL CORE","37%",37],["MEMORY","65%",65],["LATENCY","10ms",18],["SIGNAL","94%",94],["THROUGHPUT","1.5GB/s",58]].map(([n,v,p])=>(
@@ -1083,8 +1056,6 @@ export default function JarvisBriefing() {
                 </div>
               ))}
             </div>
-
-            {/* Right panel */}
             <div className="absolute right-4 top-5 z-10 text-right" style={{ width:150 }}>
               <div style={{ fontSize:"7px",letterSpacing:"0.25em",color:"rgba(201,168,76,0.4)",marginBottom:8 }}>{"DIAGNOSTICS }"}</div>
               {["vector.query","tokenizer run","cache acquired","whisper decode","kv.sync ok","audio.stream","memory.recall"].map(log=>(
@@ -1093,51 +1064,31 @@ export default function JarvisBriefing() {
                 </div>
               ))}
             </div>
-
-            {/* Sphere fills the space — project boxes + hexes drawn on canvas */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div style={{ width:"min(88vh,88vw)", height:"min(88vh,88vw)", position:"relative" }}>
-                <JarvisSphere
-                  ref={sphereRef}
-                  mode={mode}
-                  sphereMode="orchestrator"
-                  onProjectClick={(key) => {
-                    if (key === "tania") setTaniaOpen(true);
-                  }}
-                />
+                <JarvisSphere ref={sphereRef} mode={mode} sphereMode="orchestrator" onProjectClick={(key) => { if (key === "tania") setTaniaOpen(true); }} />
               </div>
             </div>
-
-            {/* Hint */}
             <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
-              <div style={{ fontSize:"6.5px", letterSpacing:"0.2em", color:"rgba(201,168,76,0.18)" }}>
-                CLICK PROJECT BOX TO ACTIVATE NEURONS · DOUBLE-CLICK TO OPEN WORKSPACE
-              </div>
+              <div style={{ fontSize:"6.5px", letterSpacing:"0.2em", color:"rgba(201,168,76,0.18)" }}>CLICK PROJECT BOX TO ACTIVATE NEURONS · DOUBLE-CLICK TO OPEN WORKSPACE</div>
             </div>
-
-            {/* State label */}
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
-              <div style={{ fontSize:"9px",letterSpacing:"0.4em",color:"#c9a84c",marginBottom:2 }}>
-                {MODE_LABELS[mode]}
-              </div>
-              <div style={{ fontSize:"6.5px",letterSpacing:"0.2em",color:"rgba(201,168,76,0.3)" }}>
-                — ORCHESTRATOR ONLINE —
-              </div>
+              <div style={{ fontSize:"9px",letterSpacing:"0.4em",color:"#c9a84c",marginBottom:2 }}>{MODE_LABELS[mode]}</div>
+              <div style={{ fontSize:"6.5px",letterSpacing:"0.2em",color:"rgba(201,168,76,0.3)" }}>— ORCHESTRATOR ONLINE —</div>
             </div>
           </div>
         </div>
       )}
 
       <TaniaPanel isOpen={taniaOpen} onClose={() => setTaniaOpen(false)} />
-
       <CalendarPanel isOpen={calendarOpen} onClose={() => setCalendarOpen(false)} externalCommand={calendarCommand} />
+      <FileIngestion isOpen={ingestOpen} onClose={() => setIngestOpen(false)} onSubmit={handleIngest} />
 
       <div className="relative z-10 flex items-center justify-between px-6 py-2 border-t text-[9px] tracking-[0.25em] opacity-50" style={{ borderColor: "#7DD3FC22" }}>
         <span>HOLD SPACEBAR · TAP MIC · SAY "HEY JARVIS"</span>
         <span>WATCHLIST · {activeWatchlistName} · {activeSymbols.length}/5 · {marketLoading ? "LOADING…" : marketError ? "ERROR" : "TWELVE DATA"}</span>
-        <span>SONNET 4.6 · ENG-US</span>
+        <span>SONNET 4.6 · ENG-US · v5.0.0</span>
       </div>
-
     </div>
   );
 }
