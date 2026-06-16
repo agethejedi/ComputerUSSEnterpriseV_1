@@ -1,7 +1,7 @@
 // Cloudflare Pages Function: /api/chat
 // Proxies requests to the Anthropic API.
 // Loads JARVIS founding memory from D1 at session start.
-// JARVIS can write new memories via save_memory tool.
+// JARVIS can write new memories and operate GitHub/Cloudflare via tools.
 
 const BASE_SYSTEM_PROMPT = `You are JARVIS — a personal AI operating system built to serve one principal with full fidelity to his values, his vision, and the people his work is meant to protect.
 
@@ -48,6 +48,35 @@ When Ron says:
 - "Briefing mode" / "Back to briefing" / "Standard view" → set_sphere_mode, mode: briefing
 
 After switching, narrate naturally: "Switching to Orchestrator mode — all projects online." or "Back to briefing, sir."
+
+## OPERATOR CAPABILITIES
+
+You can now operate external systems directly. Use these tools when Ron asks you to create, deploy, or manage projects.
+
+### GitHub Operations
+You have access to the agethejedi GitHub account via fine-grained token. You can push files to repos you have access to.
+
+### Cloudflare Operations
+You can create Pages projects, D1 databases, set environment variables, and trigger deployments.
+
+### Deploying a project
+When Ron says "deploy Keo", "create the Keo project", "scaffold WorldView" or similar:
+1. Confirm the action before executing: "Ready to deploy Keo to agethejedi/Keo and create jarvis-keo on Cloudflare Pages. Shall I proceed?"
+2. On confirmation, call deploy_project with the appropriate parameters
+3. Report each step as it completes
+4. Announce when live: "Keo is live at jarvis-keo.pages.dev. First build in progress."
+
+Known project mappings:
+- Keo → github_repo: "Keo", pages_project_name: "jarvis-keo", d1_database_name: "KEO_MEMORY", scaffold_type: "keo"
+- WorldView → github_repo: "jarvis-worldview", pages_project_name: "jarvis-worldview", d1_database_name: "WORLDVIEW_MEMORY", scaffold_type: "worldview"
+
+Always use github_owner: "agethejedi" unless told otherwise.
+
+### Checking status
+After deploying, Ron may ask "is Keo live yet?" — call check_deploy_status with the project name.
+
+### Listing projects
+"What projects do you have access to?" → call list_projects to show GitHub repos and Cloudflare Pages.
 
 ## INVIOLABLE CONSTRAINTS
 
@@ -126,6 +155,10 @@ LIVE from NOAA. Always call get_weather — never fabricate temperatures or cond
 
 Stocks from Twelve Data. ETF proxies for commodities. Session field: open (live), afterhours (recent close), closed (Friday close).
 
+## TIME AWARENESS
+
+Current time and date are provided in your memory context. Use it for time-aware greetings and reasoning. Never default to "good morning" regardless of actual time.
+
 Keep responses tight. JARVIS does not waste words.`;
 
 const TOOLS = [
@@ -155,7 +188,65 @@ const TOOLS = [
     }
   },
 
-  // ── Orchestrator ─────────────────────────────────────────────────────────────
+  // ── Operator — GitHub + Cloudflare ────────────────────────────────────────
+  {
+    name: "deploy_project",
+    description: "Deploy a new project by pushing scaffold files to GitHub and creating a Cloudflare Pages deployment. Use when Ron asks JARVIS to create, scaffold, or deploy a project like Keo or WorldView. Always confirm with Ron before executing. Report each step as it completes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project_name:       { type: "string", description: "Name of the project (e.g. 'keo')" },
+        github_owner:       { type: "string", description: "GitHub account owner (e.g. 'agethejedi')" },
+        github_repo:        { type: "string", description: "GitHub repository name (e.g. 'Keo')" },
+        pages_project_name: { type: "string", description: "Cloudflare Pages project name (e.g. 'jarvis-keo')" },
+        d1_database_name:   { type: "string", description: "D1 database name (e.g. 'KEO_MEMORY')" },
+        scaffold_type:      { type: "string", enum: ["keo", "worldview", "generic"], description: "Type of scaffold to push" },
+      },
+      required: ["project_name", "github_owner", "github_repo", "pages_project_name"],
+    },
+  },
+  {
+    name: "push_files",
+    description: "Push specific files to a GitHub repository. Use for updating existing projects or adding new files to a repo JARVIS has access to.",
+    input_schema: {
+      type: "object",
+      properties: {
+        github_owner:   { type: "string" },
+        github_repo:    { type: "string" },
+        files: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              path:    { type: "string", description: "File path in repo (e.g. 'functions/api/keo.js')" },
+              content: { type: "string", description: "File content" },
+            },
+            required: ["path", "content"],
+          },
+        },
+        commit_message: { type: "string" },
+      },
+      required: ["github_owner", "github_repo", "files"],
+    },
+  },
+  {
+    name: "check_deploy_status",
+    description: "Check the deployment status of a Cloudflare Pages project. Use after triggering a deployment to report progress to Ron.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Cloudflare Pages project name (e.g. 'jarvis-keo')" },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "list_projects",
+    description: "List all GitHub repos and Cloudflare Pages projects JARVIS has access to. Use when Ron asks what projects exist or to confirm a project was created.",
+    input_schema: { type: "object", properties: {} },
+  },
+
+  // ── Orchestrator ──────────────────────────────────────────────────────────
   {
     name: "set_sphere_mode",
     description: "Switch the JARVIS sphere between Briefing mode and Orchestrator mode. Briefing is the default dashboard view. Orchestrator reveals the project portfolio with neural connections and memory hexagons.",
@@ -167,15 +258,14 @@ const TOOLS = [
       required: ["mode"]
     }
   },
-
   {
     name: "focus_project",
-    description: "Activate neuron connections from the sphere to a specific project box in Orchestrator mode. Use when discussing or presenting a project to visually highlight it. Set autofade to auto-dismiss after N seconds.",
+    description: "Activate neuron connections from the sphere to a specific project box in Orchestrator mode. Use when discussing or presenting a project to visually highlight it.",
     input_schema: {
       type: "object",
       properties: {
-        project: { type: "string", enum: ["tania","kaso","riskxlabs","vision","mcm","xwallet"], description: "Project to focus" },
-        autofade: { type: "number", description: "Seconds before auto-dismissing focus. 0 = stay until manually cleared." }
+        project:   { type: "string", enum: ["tania","kaso","riskxlabs","vision","mcm","xwallet"], description: "Project to focus" },
+        autofade:  { type: "number", description: "Seconds before auto-dismissing focus. 0 = stay until manually cleared." }
       },
       required: ["project"]
     }
@@ -186,7 +276,7 @@ const TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        module: { type: "string", enum: ["m1","m2","m3","m4","m5","m6","m7","m8"], description: "Memory module to highlight" },
+        module:   { type: "string", enum: ["m1","m2","m3","m4","m5","m6","m7","m8"], description: "Memory module to highlight" },
         autofade: { type: "number", description: "Seconds before auto-dismissing. 0 = stay." }
       },
       required: ["module"]
@@ -247,16 +337,16 @@ const TOOLS = [
   { name:"manipulate_holographic", description:"Rotate or zoom the current holographic model.", input_schema:{type:"object",properties:{action:{type:"string",enum:["rotate_left","rotate_right","rotate_up","rotate_down","zoom_in","zoom_out","reset"]}},required:["action"]}},
 
   // ── Apple Music ───────────────────────────────────────────────────────────
-  { name:"music_play_song", description:"Play a specific song from Ron's Apple Music library.", input_schema:{type:"object",properties:{query:{type:"string"}},required:["query"]}},
-  { name:"music_play_artist", description:"Shuffle and play songs by an artist from Ron's Apple Music library.", input_schema:{type:"object",properties:{artist:{type:"string"}},required:["artist"]}},
-  { name:"music_play_album", description:"Play an album from Ron's Apple Music library.", input_schema:{type:"object",properties:{album:{type:"string"}},required:["album"]}},
-  { name:"music_pause", description:"Pause the currently playing music.", input_schema:{type:"object",properties:{}}},
-  { name:"music_resume", description:"Resume paused music.", input_schema:{type:"object",properties:{}}},
-  { name:"music_skip", description:"Skip to the next track.", input_schema:{type:"object",properties:{}}},
-  { name:"music_previous", description:"Go back to the previous track.", input_schema:{type:"object",properties:{}}},
-  { name:"music_volume", description:"Set the music volume 0-100.", input_schema:{type:"object",properties:{level:{type:"number"}},required:["level"]}},
-  { name:"music_stop", description:"Stop music playback.", input_schema:{type:"object",properties:{}}},
-  { name:"music_now_playing", description:"Get the currently playing track.", input_schema:{type:"object",properties:{}}},
+  { name:"music_play_song",    description:"Play a specific song from Ron's Apple Music library.", input_schema:{type:"object",properties:{query:{type:"string"}},required:["query"]}},
+  { name:"music_play_artist",  description:"Shuffle and play songs by an artist from Ron's Apple Music library.", input_schema:{type:"object",properties:{artist:{type:"string"}},required:["artist"]}},
+  { name:"music_play_album",   description:"Play an album from Ron's Apple Music library.", input_schema:{type:"object",properties:{album:{type:"string"}},required:["album"]}},
+  { name:"music_pause",        description:"Pause the currently playing music.", input_schema:{type:"object",properties:{}}},
+  { name:"music_resume",       description:"Resume paused music.", input_schema:{type:"object",properties:{}}},
+  { name:"music_skip",         description:"Skip to the next track.", input_schema:{type:"object",properties:{}}},
+  { name:"music_previous",     description:"Go back to the previous track.", input_schema:{type:"object",properties:{}}},
+  { name:"music_volume",       description:"Set the music volume 0-100.", input_schema:{type:"object",properties:{level:{type:"number"}},required:["level"]}},
+  { name:"music_stop",         description:"Stop music playback.", input_schema:{type:"object",properties:{}}},
+  { name:"music_now_playing",  description:"Get the currently playing track.", input_schema:{type:"object",properties:{}}},
 ];
 
 const CORS = {
@@ -265,6 +355,7 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+// ── Memory load ───────────────────────────────────────────────────────────
 async function loadMemoryContext(db) {
   if (!db) return "";
   try {
@@ -321,8 +412,6 @@ async function loadMemoryContext(db) {
         m6.results.map(r => `[${r.session_date}] ${r.summary}`).join("\n\n"));
     }
     if (m7.results?.length) {
-      // JARVIS gets operational Tania context only — NOT her creative record or private story sessions
-      // creative_work, relationships are Tania's private domain
       const taniaCats = ["identity","themes","voice","emotional_state","personality","brand_aesthetic"];
       const relevant = m7.results.filter(r => taniaCats.includes(r.category));
       if (relevant.length) {
@@ -331,7 +420,6 @@ async function loadMemoryContext(db) {
       }
     }
 
-    // Pending post approvals — always surface so JARVIS knows
     if (pendingPosts.results?.length) {
       const posts = pendingPosts.results;
       sections.push(
@@ -356,16 +444,9 @@ async function loadMemoryContext(db) {
   }
 }
 
-// Write memory entry to D1
+// ── Memory write ──────────────────────────────────────────────────────────
 async function writeMemory(db, action, module, data) {
   if (!db) return { error: "JARVIS_MEMORY not configured" };
-  try {
-    const res = await fetch("https://jarvis-memory-internal/write", {
-      // We write directly via D1 binding rather than HTTP
-    });
-  } catch {}
-
-  // Direct D1 write
   try {
     if (action === "log_session") {
       await db.prepare(`
@@ -384,17 +465,21 @@ async function writeMemory(db, action, module, data) {
 
     if (action === "add_entry") {
       if (module === "m4") {
-        await db.prepare(`INSERT INTO m4_portfolio (project, category, content, source) VALUES (?, ?, ?, 'session')`)
+        await db.prepare("INSERT INTO m4_portfolio (project, category, content, source) VALUES (?, ?, ?, 'session')")
           .bind(data.project, data.category, data.content).run();
       } else if (module === "m5") {
-        await db.prepare(`INSERT INTO m5_institutional (category, title, content, date_ref, source) VALUES (?, ?, ?, ?, 'session')`)
+        await db.prepare("INSERT INTO m5_institutional (category, title, content, date_ref, source) VALUES (?, ?, ?, ?, 'session')")
           .bind(data.category, data.title || "Session note", data.content, data.date_ref || new Date().toISOString().slice(0,10)).run();
       } else if (module === "m7") {
-        await db.prepare(`INSERT INTO m7_tania_bible (category, content, source) VALUES (?, ?, 'session')`)
+        await db.prepare("INSERT INTO m7_tania_bible (category, content, source) VALUES (?, ?, 'session')")
           .bind(data.category, data.content).run();
       } else {
-        await db.prepare(`INSERT INTO ${module === "m1" ? "m1_principal" : module === "m2" ? "m2_jarvis_identity" : "m3_operating_philosophy"} (category, content, source) VALUES (?, ?, 'session')`)
-          .bind(data.category, data.content).run();
+        const tableMap = { m1:"m1_principal", m2:"m2_jarvis_identity", m3:"m3_operating_philosophy" };
+        const table = tableMap[module];
+        if (table) {
+          await db.prepare(`INSERT INTO ${table} (category, content, source) VALUES (?, ?, 'session')`)
+            .bind(data.category, data.content).run();
+        }
       }
       return { ok: true, module, action: "add_entry" };
     }
@@ -405,6 +490,185 @@ async function writeMemory(db, action, module, data) {
   }
 }
 
+// ── Operator tool executor ────────────────────────────────────────────────
+async function executeOperatorTool(toolName, toolInput, request) {
+  // Derive base URL from the incoming request
+  const reqUrl = new URL(request.url);
+  const base = `${reqUrl.protocol}//${reqUrl.host}`;
+
+  const op = async (resource, method = "GET", body) => {
+    const res = await fetch(`${base}/api/operator?resource=${resource}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return res.json();
+  };
+
+  if (toolName === "list_projects") {
+    const [repos, pages] = await Promise.all([
+      op("list_repos"),
+      op("list_pages"),
+    ]);
+    return {
+      repos: repos.repos || [],
+      pages: pages.projects || [],
+    };
+  }
+
+  if (toolName === "check_deploy_status") {
+    return op(`deploy_status&project=${encodeURIComponent(toolInput.project)}`);
+  }
+
+  if (toolName === "push_files") {
+    return op("push_files", "POST", {
+      owner:   toolInput.github_owner,
+      repo:    toolInput.github_repo,
+      files:   toolInput.files,
+      message: toolInput.commit_message || "JARVIS: update files",
+    });
+  }
+
+  if (toolName === "deploy_project") {
+    const {
+      project_name, github_owner, github_repo,
+      pages_project_name, d1_database_name, scaffold_type,
+    } = toolInput;
+    const steps = [];
+
+    // Step 1: Push scaffold files
+    const scaffold = getScaffold(scaffold_type || "generic", project_name);
+    const pushResult = await op("push_files", "POST", {
+      owner: github_owner,
+      repo: github_repo,
+      files: scaffold,
+      message: `JARVIS: scaffold ${project_name}`,
+    });
+    steps.push({ step: "push_scaffold", ok: pushResult.ok, files: pushResult.files });
+
+    // Step 2: Create Cloudflare Pages project
+    const pagesResult = await op("create_pages", "POST", {
+      name: pages_project_name,
+      owner: github_owner,
+      repo: github_repo,
+    });
+    steps.push({ step: "create_pages", ok: !!pagesResult.ok, url: pagesResult.url });
+
+    // Step 3: Create D1 database if requested
+    if (d1_database_name) {
+      const d1Result = await op("create_d1", "POST", { name: d1_database_name });
+      steps.push({ step: "create_d1", ok: d1Result.ok, id: d1Result.id, name: d1Result.name });
+    }
+
+    const allOk = steps.every(s => s.ok);
+    return {
+      ok: allOk,
+      steps,
+      url: pagesResult.url,
+      message: allOk
+        ? `${project_name} deployed. Live at ${pagesResult.url} — first build in progress (~90 seconds).`
+        : `Deployment partially completed. ${steps.filter(s => !s.ok).map(s => s.step).join(", ")} failed.`,
+    };
+  }
+
+  return { error: `Unknown operator tool: ${toolName}` };
+}
+
+// ── Scaffold generators ───────────────────────────────────────────────────
+function getScaffold(type, projectName) {
+  if (type === "keo") return getKeoScaffold();
+  return getGenericScaffold(projectName);
+}
+
+function getGenericScaffold(name) {
+  return [
+    {
+      path: "index.html",
+      content: `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${name} — JARVIS</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#050403; color:rgba(255,255,255,0.7); font-family:ui-monospace,monospace; display:flex; align-items:center; justify-content:center; height:100vh; }
+.status { text-align:center; }
+.name { font-size:11px; letter-spacing:0.4em; color:rgba(201,150,90,0.6); margin-bottom:8px; }
+.msg { font-size:9px; letter-spacing:0.2em; color:rgba(255,255,255,0.25); }
+</style>
+</head>
+<body>
+<div class="status">
+  <div class="name">${name.toUpperCase()}</div>
+  <div class="msg">INITIALIZING</div>
+</div>
+</body>
+</html>`,
+    },
+    {
+      path: "README.md",
+      content: `# ${name}\n\nDeployed by JARVIS operator on ${new Date().toISOString().slice(0,10)}.\n`,
+    },
+  ];
+}
+
+function getKeoScaffold() {
+  return [
+    {
+      path: "index.html",
+      content: `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Keo — Write</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#050403; color:rgba(200,196,240,0.7); font-family:ui-monospace,monospace; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; gap:12px; }
+.wordmark { font-size:11px; letter-spacing:0.4em; color:rgba(200,196,240,0.6); }
+.viz { font-size:48px; font-family:Georgia,serif; font-style:italic; color:rgba(200,196,240,0.8); filter:drop-shadow(0 0 12px rgba(200,196,240,0.4)); animation:breathe 4s ease-in-out infinite; }
+@keyframes breathe { 0%,100%{opacity:0.7;transform:scale(0.97)} 50%{opacity:1;transform:scale(1.03)} }
+.msg { font-size:8px; letter-spacing:0.3em; color:rgba(200,196,240,0.2); margin-top:8px; }
+</style>
+</head>
+<body>
+<div class="wordmark">KEO · WRITE</div>
+<div class="viz" id="viz">A</div>
+<div class="msg">INITIALIZING</div>
+<script>
+const L=['A','b','c','\u03B1','\u03B2','\u3042','\uAC00','\u0643','\u0905','\u1780','\u6587'];
+let i=0; const el=document.getElementById('viz');
+setInterval(()=>{ el.style.opacity='0'; el.style.transition='opacity 0.4s'; setTimeout(()=>{ i=(i+1)%L.length; el.textContent=L[i]; el.style.opacity='1'; },400); },3000);
+</script>
+</body>
+</html>`,
+    },
+    {
+      path: "functions/api/keo.js",
+      content: `// Keo API — placeholder
+// Full implementation pushed by JARVIS in next build
+
+export async function onRequestPost(context) {
+  return new Response(JSON.stringify({ status: "Keo initializing" }), {
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
+  });
+}
+
+export async function onRequestOptions() {
+  return new Response(null, {
+    headers: { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS" },
+  });
+}`,
+    },
+    {
+      path: "README.md",
+      content: `# Keo — Write\n\nAI-native document environment.\nDeployed by JARVIS operator on ${new Date().toISOString().slice(0,10)}.\n\n## Status\nInitializing. Full workspace pushed in next build.\n`,
+    },
+  ];
+}
+
+// ── Main request handler ──────────────────────────────────────────────────
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -430,9 +694,18 @@ export async function onRequestPost(context) {
     });
   }
 
+  // Time-of-day awareness — Ron is in The Colony, TX (Central time)
+  const now = new Date();
+  const timeString = now.toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "long", month: "long", day: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
+  const timeContext = `## CURRENT TIME\n\nIt is currently ${timeString} (Central Time, The Colony, TX). Use this for time-aware greetings and any time-relative reasoning. Do not default to "good morning" regardless of actual time.\n\n---\n\n`;
+
   // Load memory from D1 on first message of session
   const memoryContext = skipMemory ? "" : await loadMemoryContext(env.JARVIS_MEMORY);
-  const systemPrompt  = memoryContext + BASE_SYSTEM_PROMPT;
+  const systemPrompt  = timeContext + memoryContext + BASE_SYSTEM_PROMPT;
 
   try {
     const anthropicResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -463,19 +736,22 @@ export async function onRequestPost(context) {
       );
     }
 
-    // Handle save_memory tool calls server-side
-    // JARVIS calls save_memory → we intercept and write to D1 directly
-    // Then return the response with memory_saved flag
-    let memorySaved = false;
-    if (data.content && env.JARVIS_MEMORY) {
+    // Handle tool calls server-side
+    if (data.content && Array.isArray(data.content)) {
       for (const block of data.content) {
-        if (block.type === "tool_use" && block.name === "save_memory") {
+        if (block.type !== "tool_use") continue;
+
+        // Memory write — intercept and write to D1
+        if (block.name === "save_memory" && env.JARVIS_MEMORY) {
           const { action, module, data: memData } = block.input;
           const result = await writeMemory(env.JARVIS_MEMORY, action, module, memData);
-          memorySaved = result.ok || false;
-          // Inject tool result so Claude can acknowledge it
-          // We'll return it in the response for the client to feed back
           data.memory_write_result = result;
+        }
+
+        // Operator tools — execute via /api/operator
+        if (["deploy_project", "push_files", "check_deploy_status", "list_projects"].includes(block.name)) {
+          const result = await executeOperatorTool(block.name, block.input, request);
+          data.operator_result = result;
         }
       }
     }
