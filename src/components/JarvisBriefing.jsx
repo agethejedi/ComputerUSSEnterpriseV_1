@@ -353,10 +353,11 @@ async function executeToolCall(name, input, ctx) {
     // in the next Claude response turn.
     case "deploy_project":
     case "push_files":
+    case "create_file":
+    case "patch_file":
+    case "create_repo":
     case "check_deploy_status":
     case "list_projects": {
-      // Result already executed server-side — return acknowledgement
-      // Claude will receive the operator_result in the response data
       return JSON.stringify({ ok: true, tool: name, note: "Executed server-side" });
     }
 
