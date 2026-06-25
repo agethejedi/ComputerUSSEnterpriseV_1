@@ -54,10 +54,19 @@ After switching, narrate naturally: "Switching to Orchestrator mode — all proj
 You can now operate external systems directly. Use these tools when Ron asks you to create, deploy, or manage projects.
 
 ### GitHub Operations
-You have access to the agethejedi GitHub account via fine-grained token. You can push files to repos you have access to.
+You have access to the agethejedi GitHub account via fine-grained token. You can:
+- Push files to repos you have access to
+- Create new repositories by voice
+- Fetch and patch specific files with targeted find/replace edits
 
 ### Cloudflare Operations
 You can create Pages projects, D1 databases, set environment variables, and trigger deployments.
+
+### Creating a repository
+When Ron says "create a repo for WorldView" or "make a new repository called X":
+1. Confirm name and whether it should be private or public
+2. Call create_repo — this creates the repo with an initial commit so it's not empty
+3. Report back with the URL
 
 ### Deploying a project
 When Ron says "deploy Keo", "create the Keo project", "scaffold WorldView" or similar:
@@ -66,11 +75,17 @@ When Ron says "deploy Keo", "create the Keo project", "scaffold WorldView" or si
 3. Report each step as it completes
 4. Announce when live: "Keo is live at jarvis-keo.pages.dev. First build in progress."
 
-Known project mappings:
-- Keo → github_repo: "Keo", pages_project_name: "jarvis-keo", d1_database_name: "KEO_MEMORY", scaffold_type: "keo"
-- WorldView → github_repo: "jarvis-worldview", pages_project_name: "jarvis-worldview", d1_database_name: "WORLDVIEW_MEMORY", scaffold_type: "worldview"
+### Patching a file by voice
+When Ron says things like "change the words per page to 800" or "update the API timeout to 30 seconds":
+1. Identify which repo and file needs patching
+2. Call patch_file with the exact string to find and the replacement
+3. The file is fetched from GitHub, patched, and pushed back automatically
+4. Report what changed and confirm the commit
 
-Always use github_owner: "agethejedi" unless told otherwise.
+### Creating a small file
+When Ron asks JARVIS to generate and push a short config, README, or utility file:
+1. Use create_file — content must be under 8000 characters
+2. For larger or complex files (full HTML/CSS/JS workspace) — tell Ron to use file ingestion instead: Claude generates it, Ron brings it in via the 📎 Send File modal, then asks JARVIS to push it
 
 ### Checking status
 After deploying, Ron may ask "is Keo live yet?" — call check_deploy_status with the project name.
@@ -227,6 +242,51 @@ const TOOLS = [
         commit_message: { type: "string" },
       },
       required: ["github_owner", "github_repo", "files"],
+    },
+  },
+  {
+    name: "create_file",
+    description: "Create and push a single small file to a GitHub repository. Use for configs, READMEs, or short utility files JARVIS generates live. Content must be under 8000 characters — use file ingestion for larger files.",
+    input_schema: {
+      type: "object",
+      properties: {
+        github_owner:   { type: "string" },
+        github_repo:    { type: "string" },
+        path:           { type: "string", description: "File path in repo (e.g. 'README.md')" },
+        content:        { type: "string", description: "File content — must be under 8000 characters" },
+        commit_message: { type: "string" },
+      },
+      required: ["github_owner", "github_repo", "path", "content"],
+    },
+  },
+  {
+    name: "patch_file",
+    description: "Fetch a file from GitHub, find an exact string, replace it, and push back. Use for targeted voice-driven patches like 'change the words per page to 800' or 'update the API endpoint'. The find string must match exactly what is in the file.",
+    input_schema: {
+      type: "object",
+      properties: {
+        github_owner:   { type: "string" },
+        github_repo:    { type: "string" },
+        path:           { type: "string", description: "File path in repo to patch" },
+        find:           { type: "string", description: "Exact string to find in the file" },
+        replace:        { type: "string", description: "String to replace it with" },
+        commit_message: { type: "string" },
+      },
+      required: ["github_owner", "github_repo", "path", "find", "replace"],
+    },
+  },
+  {
+    name: "create_repo",
+    description: "Create a new GitHub repository. Use when Ron asks to create a new repo for a project or agent. Confirm the name and visibility before creating.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name:        { type: "string", description: "Repository name (e.g. 'WorldView')" },
+        description: { type: "string", description: "Short description of the repo" },
+        private:     { type: "boolean", description: "true = private repo, false = public. Default false." },
+        auto_init:   { type: "boolean", description: "Initialize with a README so the repo isn't empty. Default true." },
+      },
+      required: ["name"],
     },
   },
   {
@@ -634,6 +694,12 @@ async function executeOperatorTool(toolName, toolInput, env) {
   const cfToken   = env.CLOUDFLARE_API_TOKEN;
   const cfAccount = env.CLOUDFLARE_ACCOUNT_ID;
 
+  // ── Fix: strip .pages.dev from subdomain if already present ─────────────
+  function pagesUrl(subdomain) {
+    const clean = subdomain.replace(/\.pages\.dev$/, "");
+    return `https://${clean}.pages.dev`;
+  }
+
   if (toolName === "list_projects") {
     if (!ghToken) return { error: "GITHUB_TOKEN not configured" };
     if (!cfToken || !cfAccount) return { error: "Cloudflare credentials not configured" };
@@ -643,7 +709,7 @@ async function executeOperatorTool(toolName, toolInput, env) {
     ]);
     return {
       repos: repos.map(r => ({ name: r.name, full_name: r.full_name, private: r.private })),
-      pages: projects.map(p => ({ name: p.name, url: `https://${p.subdomain}.pages.dev` })),
+      pages: projects.map(p => ({ name: p.name, url: pagesUrl(p.subdomain) })),
     };
   }
 
@@ -671,6 +737,87 @@ async function executeOperatorTool(toolName, toolInput, env) {
     );
   }
 
+  // ── create_file — push a single small generated file ────────────────────
+  if (toolName === "create_file") {
+    if (!ghToken) return { error: "GITHUB_TOKEN not configured" };
+    const { github_owner, github_repo, path, content, commit_message } = toolInput;
+    if (!github_owner || !github_repo || !path || !content) {
+      return { error: "github_owner, github_repo, path, and content are required" };
+    }
+    // Hard limit — keep payloads small to avoid JSON fragility
+    if (content.length > 8000) {
+      return { error: "Content too large for live generation (>8000 chars). Use file ingestion instead." };
+    }
+    return ghPushFiles(
+      ghToken, github_owner, github_repo,
+      [{ path, content }],
+      commit_message || `JARVIS: create ${path}`
+    );
+  }
+
+  // ── patch_file — fetch, find/replace, push back ──────────────────────────
+  if (toolName === "patch_file") {
+    if (!ghToken) return { error: "GITHUB_TOKEN not configured" };
+    const { github_owner, github_repo, path, find, replace, commit_message } = toolInput;
+    if (!github_owner || !github_repo || !path || !find || replace == null) {
+      return { error: "github_owner, github_repo, path, find, and replace are required" };
+    }
+
+    // Fetch current file content from GitHub
+    let currentContent;
+    try {
+      const fileData = await ghRequest(ghToken, "GET",
+        `/repos/${github_owner}/${github_repo}/contents/${path}`
+      );
+      // GitHub returns content as base64
+      currentContent = atob(fileData.content.replace(/\s/g, ""));
+    } catch (err) {
+      return { error: `Could not fetch ${path}: ${String(err)}` };
+    }
+
+    // Apply the replacement
+    if (!currentContent.includes(find)) {
+      return { error: `String not found in ${path}. No changes made.`, searched_for: find.slice(0, 100) };
+    }
+    const patchedContent = currentContent.replace(find, replace);
+    const changeCount = (currentContent.match(new RegExp(find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length;
+
+    // Push patched file back
+    const result = await ghPushFiles(
+      ghToken, github_owner, github_repo,
+      [{ path, content: patchedContent }],
+      commit_message || `JARVIS: patch ${path}`
+    );
+
+    return { ...result, patched: path, occurrences_replaced: changeCount };
+  }
+
+  // ── create_repo — create a new GitHub repository ─────────────────────────
+  if (toolName === "create_repo") {
+    if (!ghToken) return { error: "GITHUB_TOKEN not configured" };
+    const { name, description, private: isPrivate, auto_init } = toolInput;
+    if (!name) return { error: "name is required" };
+
+    try {
+      const repo = await ghRequest(ghToken, "POST", "/user/repos", {
+        name,
+        description: description || "",
+        private: isPrivate ?? false,
+        auto_init: auto_init ?? true, // creates initial commit so repo isn't empty
+      });
+      return {
+        ok: true,
+        name: repo.name,
+        full_name: repo.full_name,
+        url: repo.html_url,
+        clone_url: repo.clone_url,
+        private: repo.private,
+      };
+    } catch (err) {
+      return { error: `Failed to create repo: ${String(err)}` };
+    }
+  }
+
   if (toolName === "deploy_project") {
     if (!ghToken) return { error: "GITHUB_TOKEN not configured" };
     if (!cfToken || !cfAccount) return { error: "Cloudflare credentials not configured" };
@@ -684,7 +831,7 @@ async function executeOperatorTool(toolName, toolInput, env) {
     steps.push({ step: "push_scaffold", ok: pushResult.ok, files: pushResult.files });
 
     // Step 2: Create Pages project
-    let pagesUrl = "";
+    let deployUrl = "";
     try {
       const project = await cfRequest(cfToken, "POST", `/accounts/${cfAccount}/pages/projects`, {
         name: pages_project_name,
@@ -701,8 +848,8 @@ async function executeOperatorTool(toolName, toolInput, env) {
         },
         build_config: { build_command: "", destination_dir: "", root_dir: "" },
       });
-      pagesUrl = `https://${project.subdomain}.pages.dev`;
-      steps.push({ step: "create_pages", ok: true, url: pagesUrl });
+      deployUrl = pagesUrl(project.subdomain);
+      steps.push({ step: "create_pages", ok: true, url: deployUrl });
     } catch (err) {
       steps.push({ step: "create_pages", ok: false, error: String(err) });
     }
@@ -721,12 +868,13 @@ async function executeOperatorTool(toolName, toolInput, env) {
     return {
       ok: allOk,
       steps,
-      url: pagesUrl,
+      url: deployUrl,
       message: allOk
-        ? `${project_name} deployed. Live at ${pagesUrl} — first build in progress (~90 seconds).`
+        ? `${project_name} deployed. Live at ${deployUrl} — first build in progress (~90 seconds).`
         : `Partially completed. Failed: ${steps.filter(s => !s.ok).map(s => s.step).join(", ")}.`,
     };
   }
+
 
   return { error: `Unknown operator tool: ${toolName}` };
 }
@@ -906,7 +1054,7 @@ export async function onRequestPost(context) {
         }
 
         // Operator tools — execute via /api/operator
-        if (["deploy_project", "push_files", "check_deploy_status", "list_projects"].includes(block.name)) {
+        if (["deploy_project", "push_files", "create_file", "patch_file", "create_repo", "check_deploy_status", "list_projects"].includes(block.name)) {
           const result = await executeOperatorTool(block.name, block.input, env);
           data.operator_result = result;
         }
