@@ -5,8 +5,8 @@
 // GET /api/apple-music-token → { token, expiresAt }
 //
 // Required Cloudflare env vars:
-//   APPLE_MUSIC_KEY_ID     — Key ID from Apple Developer (e.g. ABC1234567)
-//   APPLE_MUSIC_TEAM_ID    — Team ID from Apple Developer (e.g. TEAM123456)
+//   APPLE_MUSIC_KEY_ID      — Key ID from Apple Developer (e.g. ABC1234567)
+//   APPLE_MUSIC_TEAM_ID     — Team ID from Apple Developer (e.g. TEAM123456)
 //   APPLE_MUSIC_PRIVATE_KEY — Contents of the .p8 file Apple gives you
 
 const CORS = {
@@ -21,8 +21,7 @@ const json = (data, status = 200) =>
     headers: { "Content-Type": "application/json", ...CORS },
   });
 
-// Build a JWT using Web Crypto (available in Cloudflare Workers)
-async function buildJWT(keyId, teamId, privateKeyPem) {
+async function buildJWT(keyId, teamId, privateKeyPem, origin) {
   // Clean up PEM — remove headers and whitespace
   const pemBody = privateKeyPem
     .replace(/-----BEGIN PRIVATE KEY-----/, "")
@@ -32,7 +31,6 @@ async function buildJWT(keyId, teamId, privateKeyPem) {
     .replace(/\s/g, "");
 
   const keyData = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
-
   const cryptoKey = await crypto.subtle.importKey(
     "pkcs8",
     keyData,
@@ -45,7 +43,15 @@ async function buildJWT(keyId, teamId, privateKeyPem) {
   const exp = now + 15897600; // 6 months
 
   const header = { alg: "ES256", kid: keyId };
-  const payload = { iss: teamId, iat: now, exp };
+
+  // origin claim is required for MusicKit JS web apps —
+  // without it Apple returns 401 on all user-authenticated calls
+  const payload = {
+    iss: teamId,
+    iat: now,
+    exp,
+    origin,
+  };
 
   const encode = (obj) =>
     btoa(JSON.stringify(obj))
@@ -55,7 +61,6 @@ async function buildJWT(keyId, teamId, privateKeyPem) {
 
   const signingInput = `${encode(header)}.${encode(payload)}`;
   const msgBuffer = new TextEncoder().encode(signingInput);
-
   const sigBuffer = await crypto.subtle.sign(
     { name: "ECDSA", hash: "SHA-256" },
     cryptoKey,
@@ -71,25 +76,29 @@ async function buildJWT(keyId, teamId, privateKeyPem) {
 }
 
 export async function onRequestGet(context) {
-  const { env } = context;
-  const keyId = env.APPLE_MUSIC_KEY_ID;
-  const teamId = env.APPLE_MUSIC_TEAM_ID;
+  const { request, env } = context;
+  const keyId      = env.APPLE_MUSIC_KEY_ID;
+  const teamId     = env.APPLE_MUSIC_TEAM_ID;
   const privateKey = env.APPLE_MUSIC_PRIVATE_KEY;
 
   if (!keyId || !teamId || !privateKey) {
     return json({
       error: "Apple Music credentials not configured",
       missing: [
-        !keyId && "APPLE_MUSIC_KEY_ID",
-        !teamId && "APPLE_MUSIC_TEAM_ID",
+        !keyId      && "APPLE_MUSIC_KEY_ID",
+        !teamId     && "APPLE_MUSIC_TEAM_ID",
         !privateKey && "APPLE_MUSIC_PRIVATE_KEY",
       ].filter(Boolean),
-      note: "Set these in Cloudflare Pages → Settings → Environment Variables",
     }, 503);
   }
 
-  // Cache the token for 24 hours — it's valid for 6 months
-  const cacheKey = new Request("https://jarvis-apple-music-token-v1/token");
+  // Derive origin from the incoming request so it works on any domain
+  // (custom domain, pages.dev preview, localhost)
+  const reqUrl = new URL(request.url);
+  const origin = `${reqUrl.protocol}//${reqUrl.host}`;
+
+  // Cache key includes origin so different domains get different tokens
+  const cacheKey = new Request(`https://jarvis-apple-music-token-v1/token?origin=${encodeURIComponent(origin)}`);
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) {
@@ -100,8 +109,8 @@ export async function onRequestGet(context) {
   }
 
   try {
-    const { token, expiresAt } = await buildJWT(keyId, teamId, privateKey);
-    const response = new Response(JSON.stringify({ token, expiresAt }), {
+    const { token, expiresAt } = await buildJWT(keyId, teamId, privateKey, origin);
+    const response = new Response(JSON.stringify({ token, expiresAt, origin }), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
