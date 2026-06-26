@@ -785,10 +785,10 @@ export async function onRequestPost(context) {
           data.operator_result = result;
         }
 
-        // Black Box tools — acknowledged server-side, executed client-side
-        if (["activate_blackbox", "close_blackbox", "blackbox_analyze", "blackbox_coach", "blackbox_search"].includes(block.name)) {
-          data.blackbox_action = { tool: block.name, input: block.input };
-        }
+        // Black Box tools (activate_blackbox, close_blackbox, blackbox_analyze,
+        // blackbox_coach, blackbox_search) are handled entirely client-side in
+        // JarvisBriefing.jsx executeToolCall. Do NOT intercept here — they must
+        // pass through as tool_use blocks in data.content so the frontend sees them.
       }
     }
 
