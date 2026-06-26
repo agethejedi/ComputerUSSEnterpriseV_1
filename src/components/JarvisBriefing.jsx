@@ -9,6 +9,7 @@ import ResearchPanel, { buildResearchCommand } from "./ResearchPanel.jsx";
 import { useElevenLabsSpeak, useWakeWord, useMultiWakeWord, pauseWakeWords, resumeWakeWords, useJarvisIntro, IntroOverlay, useMusicController } from "./VoiceAndIntro.jsx";
 import TaniaPanel from "./TaniaPanel.jsx";
 import FileIngestion, { buildFileContentBlocks } from "./FileIngestion.jsx";
+import BlackBoxPanel from "./BlackBoxPanel.jsx";
 import JarvisSphere from "./JarvisSphere.jsx";
 
 const MODE_LABELS = {
@@ -342,15 +343,29 @@ async function executeToolCall(name, input, ctx) {
 
     // ── Memory write ──────────────────────────────────────────────────────────
     case "save_memory": {
-      // D1 write is handled server-side in chat.js
       return JSON.stringify({ ok: true, saved: true, module: input.module });
     }
 
+    // ── Black Box subagent ────────────────────────────────────────────────────
+    case "activate_blackbox": {
+      ctx.setBlackBoxOpen(true);
+      ctx.setBlackBoxAction(null);
+      return JSON.stringify({ ok: true });
+    }
+    case "close_blackbox": {
+      ctx.setBlackBoxOpen(false);
+      ctx.setBlackBoxAction(null);
+      return JSON.stringify({ ok: true });
+    }
+    case "blackbox_analyze":
+    case "blackbox_coach":
+    case "blackbox_search": {
+      ctx.setBlackBoxOpen(true);
+      ctx.setBlackBoxAction({ type: name, payload: input });
+      return JSON.stringify({ ok: true, tool: name, note: "Black Box opened" });
+    }
+
     // ── Operator tools — executed server-side in chat.js ──────────────────────
-    // The frontend just needs to acknowledge these so they don't fall through
-    // to the default "Unknown tool" handler. The actual GitHub/Cloudflare API
-    // calls happen in chat.js executeOperatorTool() and results come back
-    // in the next Claude response turn.
     case "deploy_project":
     case "push_files":
     case "create_file":
@@ -656,6 +671,9 @@ export default function JarvisBriefing() {
   const [sphereMode, setSphereMode] = useState("briefing");
   const [taniaOpen, setTaniaOpen] = useState(false);
   const [ingestOpen, setIngestOpen] = useState(false);
+  // ── Black Box state ───────────────────────────────────────────────────────
+  const [blackBoxOpen, setBlackBoxOpen] = useState(false);
+  const [blackBoxAction, setBlackBoxAction] = useState(null);
 
   const sphereRef = useRef(null);
   const [holoCommand, setHoloCommand] = useState(null);
@@ -706,7 +724,6 @@ export default function JarvisBriefing() {
 
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
 
-  // Time-aware greeting
   const getTimeGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 5)  return "Good night";
@@ -716,10 +733,8 @@ export default function JarvisBriefing() {
     return "Good night";
   };
 
-  // ── ElevenLabs TTS with Web Speech fallback + mobile unlock ───────────────
   const { speak, unlockSpeech } = useElevenLabsSpeak();
 
-  // Safety net — unlock audio on the very first tap/touch anywhere on the page
   useEffect(() => {
     const handler = () => { unlockSpeech(); };
     document.addEventListener("touchstart", handler, { once: true, passive: true });
@@ -730,7 +745,6 @@ export default function JarvisBriefing() {
     };
   }, [unlockSpeech]);
 
-  // ── Daily Apple Music intro + boot overlay ────────────────────────────────
   const { introState, skipIntro } = useJarvisIntro({
     onComplete: () => setTimeout(() => speak(`${getTimeGreeting()}. All systems online. How can I assist you today?`), 500),
     onSongInfo: (song) => setIntroSong(song),
@@ -795,12 +809,10 @@ export default function JarvisBriefing() {
   const refreshActiveWatchlist = useCallback((symbols) => { fetchActiveMarketData(symbols); }, [fetchActiveMarketData]);
   const handleSwitchList = useCallback((name) => { setActiveWatchlistName(name); lsSaveActive(name); fetchActiveMarketData(watchlistsRef.current[name] || []); }, [fetchActiveMarketData]);
 
-  // ── Apple Music playback controller ──────────────────────────────────────
   const musicController = useMusicController();
 
   const sendToClaude = useCallback(async (userMessage) => {
     setMode("thinking");
-    // userMessage can be a string or a multimodal content blocks array
     let messages = [...apiMessagesRef.current, { role: "user", content: userMessage }];
 
     for (let round = 0; round < 6; round++) {
@@ -857,6 +869,9 @@ export default function JarvisBriefing() {
             musicController,
             setSphereMode,
             sphereRef,
+            // ── Black Box context ───────────────────────────────────────────
+            setBlackBoxOpen,
+            setBlackBoxAction,
           });
           return { type: "tool_result", tool_use_id: tb.id, content: result };
         })
@@ -894,7 +909,7 @@ export default function JarvisBriefing() {
     recognition.onend = () => {
       isListeningRef.current = false; setInterimTranscript("");
       const text = finalTranscript.trim().toLowerCase();
-      const reserved = ["tania", "hey tania", "jarvis", "hey jarvis"];
+      const reserved = ["tania", "hey tania", "jarvis", "hey jarvis", "black box", "blackbox"];
       if (text && reserved.includes(text)) { setMode("idle"); resumeWakeWords(); return; }
       if (finalTranscript.trim()) {
         setConversation((c) => [...c, { role: "user", display: finalTranscript.trim() }]);
@@ -910,8 +925,8 @@ export default function JarvisBriefing() {
   }, []);
 
   useMultiWakeWord([
-    { word: "jarvis", onMatch: () => { unlockSpeech(); startListening(); }, enabled: mode === "idle" && !taniaOpen },
-    { word: "tania", onMatch: () => { if (isListeningRef.current) stopListening(); window.speechSynthesis?.cancel(); unlockSpeech(); setTaniaOpen(true); }, enabled: sphereMode === "orchestrator" && !taniaOpen },
+    { word: "jarvis", onMatch: () => { unlockSpeech(); startListening(); }, enabled: mode === "idle" && !taniaOpen && !blackBoxOpen },
+    { word: "tania", onMatch: () => { if (isListeningRef.current) stopListening(); window.speechSynthesis?.cancel(); unlockSpeech(); setTaniaOpen(true); }, enabled: sphereMode === "orchestrator" && !taniaOpen && !blackBoxOpen },
   ]);
 
   useEffect(() => {
@@ -925,13 +940,11 @@ export default function JarvisBriefing() {
 
   const handleIngest = useCallback((contentBlocks, files, text) => {
     if (!contentBlocks?.length) return;
-    // Build display label for conversation panel
     const fileNames = files.map(f => f.name).join(", ");
     const display = fileNames
       ? `[Sent ${files.length} file${files.length > 1 ? "s" : ""}: ${fileNames}]${text ? " — " + text : ""}`
       : text;
     setConversation(c => [...c, { role: "user", display }]);
-    // Send multimodal message to Claude
     sendToClaude(contentBlocks);
   }, [sendToClaude]);
 
@@ -960,12 +973,17 @@ export default function JarvisBriefing() {
       <div className="relative z-10 flex items-center justify-between px-6 py-3 border-b" style={{ borderColor: "#7DD3FC22" }}>
         <div className="flex items-center gap-4">
           <span className="text-[10px] tracking-[0.3em]" style={{ color: "#7DD3FC" }}>● JARVIS // INTERACTIVE</span>
-          <span className="text-[10px] tracking-[0.2em] opacity-50">v5.0.0</span>
+          <span className="text-[10px] tracking-[0.2em] opacity-50">v5.1.0</span>
         </div>
         <div className="flex items-center gap-6 text-[10px] tracking-[0.25em]">
           <span className="opacity-60">{dateStr}</span>
           <span style={{ color: "#7DD3FC" }} className="tabular-nums">{timeStr}<span style={{ animation: "blink 1s steps(1) infinite" }}>:</span></span>
           <button onClick={() => setCalendarOpen(true)} className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all" style={{ border: "1px solid #7DD3FC44", color: "#7DD3FC88", background: "transparent" }}>📅 CALENDAR</button>
+          <button onClick={() => { setBlackBoxOpen(true); setBlackBoxAction(null); }}
+            className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
+            style={{ border: "1px solid rgba(124,58,237,0.4)", color: "rgba(167,139,250,0.7)", background: "rgba(124,58,237,0.08)" }}>
+            ⬡ BLACK BOX
+          </button>
           <button
             onClick={() => setSphereMode(m => m === "orchestrator" ? "briefing" : "orchestrator")}
             className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
@@ -992,7 +1010,10 @@ export default function JarvisBriefing() {
             <div className="absolute -bottom-px -left-px w-3 h-3 border-b border-l" style={{ borderColor: "#7DD3FC" }} />
             <div className="absolute -bottom-px -right-px w-3 h-3 border-b border-r" style={{ borderColor: "#7DD3FC" }} />
             <div style={{ position: "relative", height: "320px" }}>
-              <JarvisSphere ref={sphereRef} mode={mode} sphereMode={sphereMode} onProjectClick={(key) => { if (key === "tania") setTaniaOpen(true); }} />
+              <JarvisSphere ref={sphereRef} mode={mode} sphereMode={sphereMode} onProjectClick={(key) => {
+                if (key === "tania") setTaniaOpen(true);
+                if (key === "blackbox") { setBlackBoxOpen(true); setBlackBoxAction(null); }
+              }} />
             </div>
             {interimTranscript && <div className="px-4 pb-2 text-center text-[11px] italic opacity-70" style={{ color: "#7DD3FC" }}>"{interimTranscript}"</div>}
             {voiceError && <div className="px-4 pb-2 text-center text-[10px]" style={{ color: "#FB7185" }}>{voiceError}</div>}
@@ -1067,7 +1088,10 @@ export default function JarvisBriefing() {
             </div>
             <div className="absolute inset-0 flex items-center justify-center">
               <div style={{ width:"min(88vh,88vw)", height:"min(88vh,88vw)", position:"relative" }}>
-                <JarvisSphere ref={sphereRef} mode={mode} sphereMode="orchestrator" onProjectClick={(key) => { if (key === "tania") setTaniaOpen(true); }} />
+                <JarvisSphere ref={sphereRef} mode={mode} sphereMode="orchestrator" onProjectClick={(key) => {
+                  if (key === "tania") setTaniaOpen(true);
+                  if (key === "blackbox") { setBlackBoxOpen(true); setBlackBoxAction(null); }
+                }} />
               </div>
             </div>
             <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
@@ -1084,11 +1108,16 @@ export default function JarvisBriefing() {
       <TaniaPanel isOpen={taniaOpen} onClose={() => setTaniaOpen(false)} />
       <CalendarPanel isOpen={calendarOpen} onClose={() => setCalendarOpen(false)} externalCommand={calendarCommand} />
       <FileIngestion isOpen={ingestOpen} onClose={() => setIngestOpen(false)} onSubmit={handleIngest} />
+      <BlackBoxPanel
+        isOpen={blackBoxOpen}
+        onClose={() => { setBlackBoxOpen(false); setBlackBoxAction(null); }}
+        initialAction={blackBoxAction}
+      />
 
       <div className="relative z-10 flex items-center justify-between px-6 py-2 border-t text-[9px] tracking-[0.25em] opacity-50" style={{ borderColor: "#7DD3FC22" }}>
         <span>HOLD SPACEBAR · TAP MIC · SAY "HEY JARVIS"</span>
         <span>WATCHLIST · {activeWatchlistName} · {activeSymbols.length}/5 · {marketLoading ? "LOADING…" : marketError ? "ERROR" : "TWELVE DATA"}</span>
-        <span>SONNET 4.6 · ENG-US · v5.0.0</span>
+        <span>SONNET 4.6 · ENG-US · v5.1.0</span>
       </div>
     </div>
   );
