@@ -5,13 +5,14 @@
 import { useState, useEffect } from "react";
 
 export default function EmailApprovalModal({ draft, onApprove, onEdit, onCancel, sending }) {
-  const [editingField, setEditingField] = useState(null) // 'to' | 'subject' | 'body' | null
-  const [editedDraft, setEditedDraft] = useState(draft)
+  const [editingField, setEditingField] = useState(null)
+  const [editedDraft, setEditedDraft] = useState(null)
   const [editValue, setEditValue] = useState("")
 
-  useEffect(() => { setEditedDraft(draft) }, [draft])
+  useEffect(() => { if (draft) setEditedDraft({ ...draft }) }, [draft])
 
-  if (!draft) return null
+  // Guard — don't render until both draft prop and local state are set
+  if (!draft || !editedDraft) return null
 
   const startEdit = (field) => {
     setEditingField(field)
@@ -22,7 +23,7 @@ export default function EmailApprovalModal({ draft, onApprove, onEdit, onCancel,
     if (editingField) {
       const updated = { ...editedDraft, [editingField]: editValue }
       setEditedDraft(updated)
-      onEdit(updated) // notify parent so JARVIS can re-read if needed
+      onEdit(updated)
     }
     setEditingField(null)
   }
@@ -65,7 +66,7 @@ export default function EmailApprovalModal({ draft, onApprove, onEdit, onCancel,
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: gold, display: "inline-block", boxShadow: `0 0 6px ${gold}` }} />
             <span style={{ fontSize: 10, letterSpacing: "0.3em", color: gold }}>EMAIL APPROVAL REQUIRED</span>
           </div>
-          <button onClick={onCancel} style={{ background: "none", border: "none", color: "#4a6a70", cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
+          <button onClick={onCancel} style={{ background: "none", border: "none", cursor: "pointer", color: "#4a6a70", fontSize: 16, lineHeight: 1, padding: 4 }}>✕</button>
         </div>
 
         {/* Email fields */}
