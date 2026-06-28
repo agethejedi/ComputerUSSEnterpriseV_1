@@ -1,4 +1,4 @@
-// BlackBoxPanel.jsx Ã¢ÂÂ JARVIS integration overlay for Black Box v2
+// BlackBoxPanel.jsx ÃÂ¢ÃÂÃÂ JARVIS integration overlay for Black Box v2
 // Renders Black Box as an iframe panel inside the JARVIS dashboard
 
 import { useEffect, useRef } from "react";
@@ -19,7 +19,7 @@ export default function BlackBoxPanel({
     iframeRef.current.contentWindow?.postMessage(msg, BB_URL);
   }, [open, action]);
 
-  if (!open) return null;
+  if (!isOpen) return null;
 
   return (
     <div
@@ -58,7 +58,7 @@ export default function BlackBoxPanel({
         <button onClick={onClose} style={{
           background: "none", border: "none", cursor: "pointer",
           color: "#9494b8", fontSize: 18, lineHeight: 1, padding: 4,
-        }}>ÃÂ</button>
+        }}>ÃÂÃÂ</button>
       </div>
 
       {/* Iframe */}
