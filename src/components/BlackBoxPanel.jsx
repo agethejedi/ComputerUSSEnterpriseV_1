@@ -1,43 +1,19 @@
-// BlackBoxPanel.jsx ÃÂ¢ÃÂÃÂ JARVIS integration overlay for Black Box v2
-// Renders Black Box as an iframe panel inside the JARVIS dashboard
-
-import { useEffect, useRef } from "react";
+// BlackBoxPanel.jsx — JARVIS integration overlay for Black Box v2
+// Props: isOpen, onClose, initialAction
 
 const BB_URL = "https://black-boxx2.pages.dev";
 
-export default function BlackBoxPanel({
-  isOpen,
-  action,
-  onClose,
-}) {
-  const iframeRef = useRef(null);
-
-  useEffect(() => {
-    if (!open || !action || !iframeRef.current) return;
-    // Post action to Black Box iframe when JARVIS triggers a command
-    const msg = { source: "jarvis", action: action.tool, payload: action.input || {} };
-    iframeRef.current.contentWindow?.postMessage(msg, BB_URL);
-  }, [open, action]);
-
+export default function BlackBoxPanel({ isOpen, onClose, initialAction }) {
   if (!isOpen) return null;
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        right: 0,
-        width: "480px",
-        height: "100vh",
-        zIndex: 9000,
-        display: "flex",
-        flexDirection: "column",
-        background: "#0f0f1a",
-        borderLeft: "1px solid #2a2a45",
-        boxShadow: "-8px 0 32px rgba(0,0,0,0.6)",
-      }}
-    >
-      {/* Header */}
+    <div style={{
+      position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+      width: "100vw", height: "100vh",
+      zIndex: 9000, display: "flex", flexDirection: "column",
+      background: "#0f0f1a",
+      boxShadow: "0 0 60px rgba(0,0,0,0.8)",
+    }}>
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "12px 16px", borderBottom: "1px solid #2a2a45",
@@ -57,13 +33,10 @@ export default function BlackBoxPanel({
         </div>
         <button onClick={onClose} style={{
           background: "none", border: "none", cursor: "pointer",
-          color: "#9494b8", fontSize: 18, lineHeight: 1, padding: 4,
-        }}>ÃÂÃÂ</button>
+          color: "#9494b8", fontSize: 20, lineHeight: 1, padding: 4,
+        }}>×</button>
       </div>
-
-      {/* Iframe */}
       <iframe
-        ref={iframeRef}
         src={BB_URL}
         title="Black Box"
         style={{ flex: 1, border: "none", background: "#0f0f1a" }}
