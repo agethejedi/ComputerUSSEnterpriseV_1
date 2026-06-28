@@ -105,7 +105,45 @@ Voice commands:
 - "Coach this response" / "Check this message before I send it" → blackbox_coach with the draft
 - "Search Black Box" / "Find conversations about X" → blackbox_search with the query
 
-Black Box lives at jarvis-blackbox.pages.dev and opens as a full-screen panel over JARVIS. Ron can close it by voice or by clicking the close button.
+Black Box lives at black-boxx2.pages.dev and opens as a full-screen panel over JARVIS. Ron can close it by voice or by clicking the close button.
+
+## EMAIL
+
+You can compose and send emails on Ron's behalf via Resend. Always follow the compose → approve → send flow — never skip approval.
+
+Default sender: JARVIS@riskxlabs.com
+Default recipient when Ron says "email me" or "send me": ron.hickman@riskxlabs.com
+
+### Contacts
+Before composing an email to a named person, call list_contacts with their name to look up their address. If found, use it. If not found, ask Ron for the address and offer to save it after sending.
+
+### Compose flow
+When Ron says "send Sarika an email about the budget meeting":
+1. Call list_contacts, query: "Sarika" — get her address
+2. Draft the email — professional, from Ron's voice, concise
+3. Call compose_email with to, subject, body, title, to_name
+4. The approval modal appears and read aloud: "Here's your email to Sarika. Subject: [subject]. [first sentence of body]. Shall I send it?"
+5. Wait for Ron's approval — do not call send_email until he approves
+
+### Approval responses
+- "Approve" / "Send it" / "Yes" / "Go ahead" → call send_email with the current draft
+- "Edit the subject to X" / "Change the opening" → revise and call compose_email again, read the update
+- "Cancel" / "Scratch it" / "Never mind" → confirm cancelled, do not send
+
+### Contacts management
+- "Add Sarah at sarah@company.com to my contacts" → save_contact
+- "What's Sarika's email?" → list_contacts, query: "Sarika"
+- "Who's in my contacts?" → list_contacts
+- "Remove John from my contacts" → delete_contact
+- After saving: "Done. Sarah is in your contacts at sarah@company.com."
+
+### Voice commands
+- "Send an email to [name] about [topic]" → list_contacts → compose_email
+- "Draft an email to [name]" → list_contacts → compose_email
+- "Send it" / "Approve the email" → send_email (only after compose_email)
+- "Cancel the email" → confirm cancelled
+
+Keep the reading natural — subject and first sentence only. Ask for approval. Do not read the full body unless asked.
 
 ## INVIOLABLE CONSTRAINTS
 
@@ -296,34 +334,34 @@ const TOOLS = [
   // ── Black Box subagent ────────────────────────────────────────────────────
   {
     name: "activate_blackbox",
-    description: "Open the Black Box relationship intelligence panel. Use when Ron says 'open Black Box', 'activate Black Box', or 'launch Black Box'.",
+    description: "Open the Black Box relationship intelligence panel.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "close_blackbox",
-    description: "Close the Black Box panel and return to JARVIS dashboard. Use when Ron says 'close Black Box', 'stand down Black Box', or 'back to JARVIS'.",
+    description: "Close the Black Box panel and return to JARVIS dashboard.",
     input_schema: { type: "object", properties: {} },
   },
   {
     name: "blackbox_analyze",
-    description: "Open Black Box and send a conversation for analysis. Use when Ron says 'run this through Black Box' or 'analyze this conversation'.",
+    description: "Open Black Box and send a conversation for analysis.",
     input_schema: {
       type: "object",
       properties: {
-        conversation_text: { type: "string", description: "The conversation text to analyze" },
-        title: { type: "string", description: "Optional title for the conversation" },
+        conversation_text: { type: "string" },
+        title: { type: "string" },
       },
       required: ["conversation_text"],
     },
   },
   {
     name: "blackbox_coach",
-    description: "Open Black Box Coach Mode with a draft response. Use when Ron says 'coach this response' or 'check this message before I send it'.",
+    description: "Open Black Box Coach Mode with a draft response.",
     input_schema: {
       type: "object",
       properties: {
-        draft: { type: "string", description: "The draft message to coach" },
-        context: { type: "string", description: "Optional conversation context" },
+        draft: { type: "string" },
+        context: { type: "string" },
       },
       required: ["draft"],
     },
@@ -334,9 +372,77 @@ const TOOLS = [
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Search query for conversation history" },
+        query: { type: "string" },
       },
       required: ["query"],
+    },
+  },
+
+  // ── Email ─────────────────────────────────────────────────────────────────
+  {
+    name: "compose_email",
+    description: "Draft an email for Ron's approval before sending. ALWAYS call this first — never call send_email without prior compose_email approval. JARVIS reads the draft aloud and waits for Ron to say 'send it', 'edit', or 'cancel'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        to:      { type: "string", description: "Recipient email address. Default to ron.hickman@riskxlabs.com when Ron says 'email me' or 'send me'. Look up contacts for named recipients." },
+        to_name: { type: "string", description: "Recipient display name for JARVIS to speak (e.g. 'Sarika', 'yourself')" },
+        subject: { type: "string", description: "Email subject line" },
+        body:    { type: "string", description: "Full email body — professional, concise, written as Ron. No sign-off needed." },
+        title:   { type: "string", description: "Short heading for the email template (usually same as or shorter than subject)" },
+      },
+      required: ["to", "subject", "body", "title"],
+    },
+  },
+  {
+    name: "send_email",
+    description: "Send an approved email draft. Only call after Ron explicitly approves ('send it', 'approve', 'yes', 'go ahead'). Never call without prior compose_email approval in the same conversation.",
+    input_schema: {
+      type: "object",
+      properties: {
+        to:      { type: "string" },
+        to_name: { type: "string" },
+        subject: { type: "string" },
+        body:    { type: "string" },
+        title:   { type: "string" },
+      },
+      required: ["to", "subject", "body", "title"],
+    },
+  },
+
+  // ── Contacts ──────────────────────────────────────────────────────────────
+  {
+    name: "save_contact",
+    description: "Save or update a contact. Use when Ron says 'add X to my contacts', 'save Y's email', or 'update Z's contact'. Also offer to save after composing to a new address.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name:  { type: "string", description: "Contact's full name" },
+        email: { type: "string", description: "Contact's email address" },
+        notes: { type: "string", description: "Optional notes (company, role, relationship)" },
+      },
+      required: ["name", "email"],
+    },
+  },
+  {
+    name: "list_contacts",
+    description: "List all contacts or search by name/email. Always call before composing email to a named person to resolve their address.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional name or email to search for" },
+      },
+    },
+  },
+  {
+    name: "delete_contact",
+    description: "Remove a contact by name.",
+    input_schema: {
+      type: "object",
+      properties: {
+        name: { type: "string" },
+      },
+      required: ["name"],
     },
   },
 
@@ -785,10 +891,9 @@ export async function onRequestPost(context) {
           data.operator_result = result;
         }
 
-        // Black Box tools (activate_blackbox, close_blackbox, blackbox_analyze,
-        // blackbox_coach, blackbox_search) are handled entirely client-side in
-        // JarvisBriefing.jsx executeToolCall. Do NOT intercept here — they must
-        // pass through as tool_use blocks in data.content so the frontend sees them.
+        // These tools are handled client-side in JarvisBriefing.jsx — pass through as tool_use blocks:
+        // activate_blackbox, close_blackbox, blackbox_analyze, blackbox_coach, blackbox_search
+        // compose_email, send_email, save_contact, list_contacts, delete_contact
       }
     }
 
