@@ -264,7 +264,7 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify({ ok: true, action: name });
     }
 
-    // ── Apple Music ────────────────────────────────────────────────────────────
+    // ââ Apple Music ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     case "music_play_song": {
       if (!musicController) return JSON.stringify({ error: "Music controller not available." });
       const result = await musicController.playSong(input.query);
@@ -316,7 +316,7 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify(result);
     }
 
-    // ── Orchestrator focus ─────────────────────────────────────────────────────
+    // ââ Orchestrator focus âââââââââââââââââââââââââââââââââââââââââââââââââââââ
     case "focus_project": {
       const key = input.project?.toLowerCase();
       if (key && ctx.sphereRef?.current) ctx.sphereRef.current.focusProject(key, input.autofade || 0);
@@ -332,18 +332,18 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify({ ok: true });
     }
 
-    // ── Orchestrator mode ──────────────────────────────────────────────────────
+    // ââ Orchestrator mode ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     case "set_sphere_mode": {
       ctx.setSphereMode(input.mode || "briefing");
       return JSON.stringify({ ok: true, sphereMode: input.mode });
     }
 
-    // ── Memory write ───────────────────────────────────────────────────────────
+    // ââ Memory write âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     case "save_memory": {
       return JSON.stringify({ ok: true, saved: true, module: input.module });
     }
 
-    // ── Black Box subagent ─────────────────────────────────────────────────────
+    // ââ Black Box subagent âââââââââââââââââââââââââââââââââââââââââââââââââââââ
     case "activate_blackbox": {
       ctx.setBlackBoxOpen(true);
       ctx.setBlackBoxAction(null);
@@ -362,7 +362,7 @@ async function executeToolCall(name, input, ctx) {
       return JSON.stringify({ ok: true, tool: name, note: "Black Box opened" });
     }
 
-    // ── Email ──────────────────────────────────────────────────────────────────
+    // ââ Email ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     case "compose_email": {
       const draft = {
         to:      input.to,
@@ -392,7 +392,7 @@ async function executeToolCall(name, input, ctx) {
       }
     }
 
-    // ── Contacts ───────────────────────────────────────────────────────────────
+    // ââ Contacts âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     case "save_contact": {
       try {
         const res = await fetch("/api/contacts", {
@@ -417,14 +417,16 @@ async function executeToolCall(name, input, ctx) {
       } catch (err) { return JSON.stringify({ error: String(err) }); }
     }
 
-    // ── Operator tools — executed server-side in chat.js ───────────────────────
+    // ââ Operator tools â executed server-side in chat.js âââââââââââââââââââââââ
     case "deploy_project":
     case "push_files":
     case "create_file":
     case "patch_file":
     case "create_repo":
     case "check_deploy_status":
-    case "list_projects": {
+    case "list_projects":
+    case "read_file":
+    case "list_repo_contents": {
       return JSON.stringify({ ok: true, tool: name, note: "Executed server-side" });
     }
 
@@ -439,17 +441,17 @@ function LocalWeather({ highlighted, weather, loading, error }) {
   const tiles = weather?.forecastTiles || [];
   const alerts = weather?.alerts || [];
   return (
-    <Panel title={`LOCAL // ${weather?.location || "—"}`} code="WX.01" accent={accent} highlighted={highlighted} panelKey="local_weather">
+    <Panel title={`LOCAL // ${weather?.location || "â"}`} code="WX.01" accent={accent} highlighted={highlighted} panelKey="local_weather">
       <div className="flex items-start justify-between mb-3">
         <div>
-          <div className="text-4xl font-light tracking-tight" style={{ color: accent }}>{c?.tempF != null ? `${c.tempF}°` : (loading ? "…" : "—")}</div>
-          <div className="text-[10px] tracking-[0.2em] opacity-60 mt-1 uppercase truncate max-w-[160px]">{c?.conditions || (loading ? "loading" : error ? "no data" : "—")}</div>
+          <div className="text-4xl font-light tracking-tight" style={{ color: accent }}>{c?.tempF != null ? `${c.tempF}Â°` : (loading ? "â¦" : "â")}</div>
+          <div className="text-[10px] tracking-[0.2em] opacity-60 mt-1 uppercase truncate max-w-[160px]">{c?.conditions || (loading ? "loading" : error ? "no data" : "â")}</div>
         </div>
         <div className="text-right text-[10px] tracking-[0.15em] opacity-70 space-y-0.5">
-          <div>FEELS · {c?.feelsF != null ? `${c.feelsF}°` : "—"}</div>
-          <div>HUMID · {c?.humidity != null ? `${c.humidity}%` : "—"}</div>
-          <div>WIND · {c?.windDir && c?.windSpeed != null ? `${c.windDir} ${c.windSpeed}` : "—"}</div>
-          <div>BARO · {c?.baroIn != null ? c.baroIn.toFixed(2) : "—"}</div>
+          <div>FEELS Â· {c?.feelsF != null ? `${c.feelsF}Â°` : "â"}</div>
+          <div>HUMID Â· {c?.humidity != null ? `${c.humidity}%` : "â"}</div>
+          <div>WIND Â· {c?.windDir && c?.windSpeed != null ? `${c.windDir} ${c.windSpeed}` : "â"}</div>
+          <div>BARO Â· {c?.baroIn != null ? c.baroIn.toFixed(2) : "â"}</div>
         </div>
       </div>
       <RadarMap center={[33.0807, -96.8867]} zoom={7} markers={[{ lat: 33.0807, lon: -96.8867, label: "YOU", isYou: true }]} className="h-32" showLabels={true} accent={accent} />
@@ -457,13 +459,13 @@ function LocalWeather({ highlighted, weather, loading, error }) {
         {tiles.map((t) => (
           <div key={t.label} className="text-center">
             <div className="text-[9px] tracking-[0.15em] opacity-50">{t.label}</div>
-            <div className="text-sm font-light" style={{ color: accent }}>{t.tempF != null ? `${t.tempF}°` : "—"}</div>
+            <div className="text-sm font-light" style={{ color: accent }}>{t.tempF != null ? `${t.tempF}Â°` : "â"}</div>
           </div>
         ))}
       </div>
       {alerts.length > 0 && (
         <div className="mt-2 px-2 py-1 text-[9px] tracking-[0.15em]" style={{ background: "#FB718515", border: "1px solid #FB718566", color: "#FB7185" }}>
-          ⚠ {alerts[0].event}: {alerts[0].areaDesc?.split(";")[0]}
+          â  {alerts[0].event}: {alerts[0].areaDesc?.split(";")[0]}
         </div>
       )}
     </Panel>
@@ -578,8 +580,8 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
   return (
     <div className={`relative overflow-hidden ${className || ""}`} style={{ background: "#020617", border: `1px solid ${accent}22` }}>
       <div ref={mapRef} className="absolute inset-0" style={{ background: "#020617" }} />
-      {!mapReady && <div className="absolute inset-0 flex items-center justify-center text-[10px] tracking-[0.2em] opacity-60" style={{ color: accent }}>LOADING RADAR…</div>}
-      <div className="absolute top-1 left-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>RAINVIEWER · LIVE</div>
+      {!mapReady && <div className="absolute inset-0 flex items-center justify-center text-[10px] tracking-[0.2em] opacity-60" style={{ color: accent }}>LOADING RADARâ¦</div>}
+      <div className="absolute top-1 left-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>RAINVIEWER Â· LIVE</div>
       <div className="absolute top-1 right-2 text-[8px] tracking-[0.2em] z-[400] pointer-events-none tabular-nums" style={{ color: accent, opacity: 0.85, textShadow: "0 0 4px #000" }}>{timestamp}</div>
     </div>
   );
@@ -588,7 +590,7 @@ function RadarMap({ center, zoom, markers, className, showLabels = true, accent 
 function NationalWeather({ highlighted, weather }) {
   const accent = "#7DD3FC";
   const cities = weather?.national?.cities || [];
-  const markers = cities.filter((c) => c.lat != null && c.lon != null).map((c) => ({ lat: c.lat, lon: c.lon, label: `${c.code} ${c.tempF != null ? c.tempF + "°" : "—"}` }));
+  const markers = cities.filter((c) => c.lat != null && c.lon != null).map((c) => ({ lat: c.lat, lon: c.lon, label: `${c.code} ${c.tempF != null ? c.tempF + "Â°" : "â"}` }));
   return (
     <Panel title="NATIONAL // CONUS" code="WX.02" accent={accent} highlighted={highlighted} panelKey="national_weather">
       <RadarMap center={[39.5, -98.35]} zoom={3} markers={markers} className="h-44" accent={accent} />
@@ -632,7 +634,7 @@ function WatchlistPanel({ highlighted, watchlists, activeWatchlistName, marketDa
   const rows = activeSymbols.map((sym) => { const found = (marketData || []).find((d) => d.symbol === sym || d.id === sym); return found || blankEntry(sym); });
   const sessionLabel = session === "open" ? "LIVE" : session === "afterhours" ? "AFTER HRS" : "CLOSED";
   return (
-    <Panel title={`${activeWatchlistName} · ${sessionLabel}`} code="MKT.01" accent={accent} highlighted={highlighted} panelKey="watchlist">
+    <Panel title={`${activeWatchlistName} Â· ${sessionLabel}`} code="MKT.01" accent={accent} highlighted={highlighted} panelKey="watchlist">
       <div className="flex items-center justify-between mb-1 flex-wrap gap-1">
         <WatchlistChips watchlists={watchlists} active={activeWatchlistName} onSelect={onSwitchList} accent={accent} />
         <StatusPill session={session} />
@@ -645,13 +647,13 @@ function WatchlistPanel({ highlighted, watchlists, activeWatchlistName, marketDa
               <div className="w-20 flex-shrink-0"><div className="text-[10px] tracking-[0.2em] opacity-70 truncate">{stock.name || stock.symbol}</div><div className="text-[8px] tracking-[0.15em] opacity-40">{stock.symbol || stock.id}</div></div>
               <div className="flex-1 min-w-0"><MiniSparkline up={up} color={color} /></div>
               <div className="text-right flex-shrink-0">
-                {hasData ? <><div className="text-sm font-light tabular-nums" style={{ color: accent }}>{stock.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div><div className="text-[10px] tabular-nums" style={{ color }}>{up ? "▲" : "▼"} {Math.abs(stock.chg).toFixed(2)} ({up ? "+" : ""}{(stock.pct ?? 0).toFixed(2)}%)</div></> : <div className="text-[10px] opacity-40 italic">{loading ? "loading…" : error ? "error" : "—"}</div>}
+                {hasData ? <><div className="text-sm font-light tabular-nums" style={{ color: accent }}>{stock.val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div><div className="text-[10px] tabular-nums" style={{ color }}>{up ? "â²" : "â¼"} {Math.abs(stock.chg).toFixed(2)} ({up ? "+" : ""}{(stock.pct ?? 0).toFixed(2)}%)</div></> : <div className="text-[10px] opacity-40 italic">{loading ? "loadingâ¦" : error ? "error" : "â"}</div>}
               </div>
             </div>
           );
         })}
       </div>
-      {kvSource === "localStorage" && <div className="mt-1 text-[8px] tracking-[0.15em] opacity-50" style={{ color: "#FBBF24" }}>⚠ saved locally only</div>}
+      {kvSource === "localStorage" && <div className="mt-1 text-[8px] tracking-[0.15em] opacity-50" style={{ color: "#FBBF24" }}>â  saved locally only</div>}
       {error && <div className="mt-1 text-[9px]" style={{ color: "#FB7185" }}>{error}</div>}
     </Panel>
   );
@@ -668,7 +670,7 @@ function CommoditiesPanel({ highlighted, commodities, session, loading, error })
           return (
             <div key={c.id} className="py-1 border-b" style={{ borderColor: `${accent}10` }}>
               <div className="flex justify-between items-baseline"><span className="text-[10px] tracking-[0.2em] opacity-70">{c.name}</span><span className="text-[8px] opacity-40 tracking-[0.1em]">{c.id}</span></div>
-              {hasData ? <><div className="flex justify-between items-baseline mt-0.5"><span className="text-sm font-light tabular-nums" style={{ color: accent }}>{c.val.toFixed(2)}</span><span className="text-[10px] tabular-nums" style={{ color }}>{up ? "+" : ""}{c.chg.toFixed(2)}</span></div><div className="text-[8px] opacity-30 tracking-[0.1em] mt-0.5">{c.unit}</div></> : <div className="text-[10px] opacity-40 italic mt-0.5">{loading ? "loading…" : error ? "no data" : "—"}</div>}
+              {hasData ? <><div className="flex justify-between items-baseline mt-0.5"><span className="text-sm font-light tabular-nums" style={{ color: accent }}>{c.val.toFixed(2)}</span><span className="text-[10px] tabular-nums" style={{ color }}>{up ? "+" : ""}{c.chg.toFixed(2)}</span></div><div className="text-[8px] opacity-30 tracking-[0.1em] mt-0.5">{c.unit}</div></> : <div className="text-[10px] opacity-40 italic mt-0.5">{loading ? "loadingâ¦" : error ? "no data" : "â"}</div>}
             </div>
           );
         })}
@@ -724,11 +726,11 @@ export default function JarvisBriefing() {
   const [taniaOpen, setTaniaOpen] = useState(false);
   const [ingestOpen, setIngestOpen] = useState(false);
 
-  // ── Black Box state ────────────────────────────────────────────────────────
+  // ââ Black Box state ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   const [blackBoxOpen, setBlackBoxOpen] = useState(false);
   const [blackBoxAction, setBlackBoxAction] = useState(null);
 
-  // ── Email state ────────────────────────────────────────────────────────────
+  // ââ Email state ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
   const [emailDraft, setEmailDraft] = useState(null);
   const [emailSending, setEmailSending] = useState(false);
 
@@ -868,7 +870,7 @@ export default function JarvisBriefing() {
 
   const musicController = useMusicController();
 
-  // ── Email approve handler ──────────────────────────────────────────────────
+  // ââ Email approve handler ââââââââââââââââââââââââââââââââââââââââââââââââââ
   const handleEmailApprove = useCallback(async (draft) => {
     setEmailSending(true);
     try {
@@ -955,10 +957,10 @@ export default function JarvisBriefing() {
             musicController,
             setSphereMode,
             sphereRef,
-            // ── Black Box ──────────────────────────────────────────────────
+            // ââ Black Box ââââââââââââââââââââââââââââââââââââââââââââââââââ
             setBlackBoxOpen,
             setBlackBoxAction,
-            // ── Email ──────────────────────────────────────────────────────
+            // ââ Email ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
             setEmailDraft: (draft) => setEmailDraft(draft),
           });
           return { type: "tool_result", tool_use_id: tb.id, content: result };
@@ -1030,7 +1032,7 @@ export default function JarvisBriefing() {
     if (!contentBlocks?.length) return;
     const fileNames = files.map(f => f.name).join(", ");
     const display = fileNames
-      ? `[Sent ${files.length} file${files.length > 1 ? "s" : ""}: ${fileNames}]${text ? " — " + text : ""}`
+      ? `[Sent ${files.length} file${files.length > 1 ? "s" : ""}: ${fileNames}]${text ? " â " + text : ""}`
       : text;
     setConversation(c => [...c, { role: "user", display }]);
     sendToClaude(contentBlocks);
@@ -1060,23 +1062,23 @@ export default function JarvisBriefing() {
 
       <div className="relative z-10 flex items-center justify-between px-6 py-3 border-b" style={{ borderColor: "#7DD3FC22" }}>
         <div className="flex items-center gap-4">
-          <span className="text-[10px] tracking-[0.3em]" style={{ color: "#7DD3FC" }}>● JARVIS // INTERACTIVE</span>
+          <span className="text-[10px] tracking-[0.3em]" style={{ color: "#7DD3FC" }}>â JARVIS // INTERACTIVE</span>
           <span className="text-[10px] tracking-[0.2em] opacity-50">v5.2.0</span>
         </div>
         <div className="flex items-center gap-6 text-[10px] tracking-[0.25em]">
           <span className="opacity-60">{dateStr}</span>
           <span style={{ color: "#7DD3FC" }} className="tabular-nums">{timeStr}<span style={{ animation: "blink 1s steps(1) infinite" }}>:</span></span>
-          <button onClick={() => setCalendarOpen(true)} className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all" style={{ border: "1px solid #7DD3FC44", color: "#7DD3FC88", background: "transparent" }}>📅 CALENDAR</button>
+          <button onClick={() => setCalendarOpen(true)} className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all" style={{ border: "1px solid #7DD3FC44", color: "#7DD3FC88", background: "transparent" }}>ð CALENDAR</button>
           <button onClick={() => { setBlackBoxOpen(true); setBlackBoxAction(null); }}
             className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
             style={{ border: "1px solid rgba(124,58,237,0.4)", color: "rgba(167,139,250,0.7)", background: "rgba(124,58,237,0.08)" }}>
-            ⬡ BLACK BOX
+            â¬¡ BLACK BOX
           </button>
           <button
             onClick={() => setSphereMode(m => m === "orchestrator" ? "briefing" : "orchestrator")}
             className="px-3 py-1 text-[9px] tracking-[0.2em] uppercase transition-all"
             style={{ border: sphereMode === "orchestrator" ? "1px solid #c9a84c" : "1px solid #c9a84c44", color: sphereMode === "orchestrator" ? "#c9a84c" : "#c9a84c88", background: sphereMode === "orchestrator" ? "rgba(201,168,76,0.1)" : "transparent", boxShadow: sphereMode === "orchestrator" ? "0 0 12px rgba(201,168,76,0.3)" : "none" }}>
-            ⬡ {sphereMode === "orchestrator" ? "BRIEFING" : "ORCHESTRATOR"}
+            â¬¡ {sphereMode === "orchestrator" ? "BRIEFING" : "ORCHESTRATOR"}
           </button>
           <span className="opacity-50">SYS.{MODE_LABELS[mode]}</span>
         </div>
@@ -1109,12 +1111,12 @@ export default function JarvisBriefing() {
               <button onClick={handleMicClick} disabled={mode === "thinking" || mode === "speaking"}
                 className="px-6 py-2.5 text-xs tracking-[0.25em] uppercase border transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ borderColor: mode === "listening" ? "#FB7185" : "#7DD3FC", color: mode === "listening" ? "#FB7185" : "#7DD3FC", background: mode === "listening" ? "#FB718515" : "#7DD3FC15", boxShadow: `0 0 20px ${mode === "listening" ? "#FB7185" : "#7DD3FC"}40` }}>
-                {mode === "listening" ? "■ Stop" : "🎙 Tap or Hold Space"}
+                {mode === "listening" ? "â  Stop" : "ð Tap or Hold Space"}
               </button>
               <button onClick={() => setIngestOpen(true)} disabled={mode === "thinking" || mode === "speaking"}
                 className="px-4 py-2.5 text-xs tracking-[0.25em] uppercase border transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ borderColor: "rgba(201,150,90,0.4)", color: "rgba(201,150,90,0.7)", background: "rgba(201,150,90,0.06)", boxShadow: "0 0 12px rgba(201,150,90,0.15)" }}>
-                📎 Send File
+                ð Send File
               </button>
             </div>
           </div>
@@ -1137,18 +1139,18 @@ export default function JarvisBriefing() {
         <div className="fixed inset-0 z-40 flex flex-col" style={{ background:"radial-gradient(ellipse at center, #0B1626 0%, #020617 100%)" }}>
           <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage:`linear-gradient(rgba(201,168,76,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(201,168,76,0.025) 1px,transparent 1px)`, backgroundSize:"48px 48px" }} />
           <div className="flex items-center justify-between px-6 py-2.5 flex-shrink-0 border-b z-10" style={{ borderColor:"rgba(201,168,76,0.15)", background:"rgba(2,4,8,0.92)" }}>
-            <div style={{ color:"#c9a84c", fontSize:"11px", letterSpacing:"0.3em", fontFamily:"ui-monospace,monospace" }}>J·A·R·V·I·S</div>
+            <div style={{ color:"#c9a84c", fontSize:"11px", letterSpacing:"0.3em", fontFamily:"ui-monospace,monospace" }}>JÂ·AÂ·RÂ·VÂ·IÂ·S</div>
             <div className="flex items-center gap-2">
               {["ONLINE","SECURE","ENCRYPTED","AUTH-LV9"].map(label=>(
                 <div key={label} className="flex items-center gap-1 px-2 py-1" style={{ border:"1px solid rgba(201,168,76,0.18)", fontSize:"7px", letterSpacing:"0.12em", color:"rgba(201,168,76,0.5)" }}>
                   <span style={{ width:4,height:4,borderRadius:"50%",background:"#22c55e",boxShadow:"0 0 4px #22c55e",display:"inline-block" }} />{label}
                 </div>
               ))}
-              <div className="px-3 py-1" style={{ border:"1px solid rgba(201,168,76,0.5)",color:"#c9a84c",fontSize:"7.5px",letterSpacing:"0.15em",background:"rgba(201,168,76,0.06)",boxShadow:"0 0 10px rgba(201,168,76,0.2)" }}>⬡ ORCHESTRATOR</div>
+              <div className="px-3 py-1" style={{ border:"1px solid rgba(201,168,76,0.5)",color:"#c9a84c",fontSize:"7.5px",letterSpacing:"0.15em",background:"rgba(201,168,76,0.06)",boxShadow:"0 0 10px rgba(201,168,76,0.2)" }}>â¬¡ ORCHESTRATOR</div>
             </div>
             <div className="flex items-center gap-4">
               <span style={{ color:"#c9a84c",fontSize:"12px",letterSpacing:"0.12em",fontFamily:"ui-monospace,monospace" }}>{now.toLocaleTimeString("en-US",{hour12:false})}</span>
-              <button onClick={() => setSphereMode("briefing")} className="px-4 py-1.5 text-[9px] tracking-[0.25em]" style={{ border:"1px solid #FB7185",color:"#FB7185",background:"rgba(251,113,133,0.08)" }}>✕ BRIEFING</button>
+              <button onClick={() => setSphereMode("briefing")} className="px-4 py-1.5 text-[9px] tracking-[0.25em]" style={{ border:"1px solid #FB7185",color:"#FB7185",background:"rgba(251,113,133,0.08)" }}>â BRIEFING</button>
             </div>
           </div>
           <div className="flex-1 relative overflow-hidden">
@@ -1183,11 +1185,11 @@ export default function JarvisBriefing() {
               </div>
             </div>
             <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
-              <div style={{ fontSize:"6.5px", letterSpacing:"0.2em", color:"rgba(201,168,76,0.18)" }}>CLICK PROJECT BOX TO ACTIVATE NEURONS · DOUBLE-CLICK TO OPEN WORKSPACE</div>
+              <div style={{ fontSize:"6.5px", letterSpacing:"0.2em", color:"rgba(201,168,76,0.18)" }}>CLICK PROJECT BOX TO ACTIVATE NEURONS Â· DOUBLE-CLICK TO OPEN WORKSPACE</div>
             </div>
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 text-center pointer-events-none">
               <div style={{ fontSize:"9px",letterSpacing:"0.4em",color:"#c9a84c",marginBottom:2 }}>{MODE_LABELS[mode]}</div>
-              <div style={{ fontSize:"6.5px",letterSpacing:"0.2em",color:"rgba(201,168,76,0.3)" }}>— ORCHESTRATOR ONLINE —</div>
+              <div style={{ fontSize:"6.5px",letterSpacing:"0.2em",color:"rgba(201,168,76,0.3)" }}>â ORCHESTRATOR ONLINE â</div>
             </div>
           </div>
         </div>
@@ -1210,9 +1212,9 @@ export default function JarvisBriefing() {
       />
 
       <div className="relative z-10 flex items-center justify-between px-6 py-2 border-t text-[9px] tracking-[0.25em] opacity-50" style={{ borderColor: "#7DD3FC22" }}>
-        <span>HOLD SPACEBAR · TAP MIC · SAY "HEY JARVIS"</span>
-        <span>WATCHLIST · {activeWatchlistName} · {activeSymbols.length}/5 · {marketLoading ? "LOADING…" : marketError ? "ERROR" : "TWELVE DATA"}</span>
-        <span>SONNET 4.6 · ENG-US · v5.2.0</span>
+        <span>HOLD SPACEBAR Â· TAP MIC Â· SAY "HEY JARVIS"</span>
+        <span>WATCHLIST Â· {activeWatchlistName} Â· {activeSymbols.length}/5 Â· {marketLoading ? "LOADINGâ¦" : marketError ? "ERROR" : "TWELVE DATA"}</span>
+        <span>SONNET 4.6 Â· ENG-US Â· v5.2.0</span>
       </div>
     </div>
   );
